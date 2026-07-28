@@ -40,9 +40,9 @@ public:
     Q_INVOKABLE void rotateEntryPoint(void);
 
     // Overrides from ComplexMissionItem
-    QString         patternName         (void) const final { return name; }
-    bool            load                (const QJsonObject& complexObject, int sequenceNumber, QString& errorString) final;
-    QString         mapVisualQML        (void) const final { return QStringLiteral("SurveyMapVisual.qml"); }
+    QString         patternName         (void) const override { return name; }
+    bool            load                (const QJsonObject& complexObject, int sequenceNumber, QString& errorString) override;
+    QString         mapVisualQML        (void) const override { return QStringLiteral("SurveyMapVisual.qml"); }
     QString         presetsSettingsGroup(void) { return settingsGroup; }
     void            savePreset          (const QString& name);
     void            loadPreset          (const QString& name);
@@ -51,14 +51,14 @@ public:
     void            setCenterCoordinate (const QGeoCoordinate& coordinate) { _surveyAreaPolygon.setCenter(coordinate); }
 
     // Overrides from TransectStyleComplexItem
-    void    save                (QJsonArray&  planItems) final;
+    void    save                (QJsonArray&  planItems) override;
     bool    specifiesCoordinate (void) const final { return true; }
     double  timeBetweenShots    (void) final;
 
     // Overrides from VisualMissionionItem
-    QString             commandDescription  (void) const final { return tr("Survey"); }
-    QString             commandName         (void) const final { return tr("Survey"); }
-    QString             abbreviation        (void) const final { return tr("S"); }
+    QString             commandDescription  (void) const override { return tr("Survey"); }
+    QString             commandName         (void) const override { return tr("Survey"); }
+    QString             abbreviation        (void) const override { return tr("S"); }
     ReadyForSaveState   readyForSaveState    (void) const final;
     double              additionalTimeDelay (void) const final;
 
@@ -86,11 +86,31 @@ public:
 signals:
     void refly90DegreesChanged(bool refly90Degrees);
 
+protected:
+    /// Derived patterns pass their own settingsGroupName so their fact values persist under their own
+    /// QSettings group. Sharing Survey's group would let a derived pattern's forced values (e.g. a manual
+    /// camera, or a zeroed trigger distance) leak into the defaults of newly created Survey items.
+    SurveyComplexItem(PlanMasterController* masterController, bool flyView, const QString& kmlOrShpFile, const QString& settingsGroupName);
+
+    /// The value written to/expected in the plan file "complexItemType" key. Derived patterns which reuse the
+    /// Survey transect implementation override this so their plan items round-trip as their own type.
+    virtual QString complexItemTypeValue(void) const { return jsonComplexItemTypeValue; }
+
+    /// Inserts interior points spaced along a transect, between its survey entry point (index 0) and its
+    /// survey exit point (index 1). Base implementation adds the hover and capture points.
+    virtual void _appendInteriorTransectPoints(QList<CoordInfo_t>& coordInfoTransect, const QGeoCoordinate& entryCoord, const QGeoCoordinate& exitCoord);
+
+    bool _loadV4V5(const QJsonObject& complexObject, int sequenceNumber, QString& errorString, int version, bool forPresets);
+    void _saveCommon(QJsonObject& complexObject);
+
+protected slots:
+    // Overrides from TransectStyleComplexItem
+    void _rebuildTransectsPhase1        (void) override;
+
 private slots:
     void _updateWizardMode              (void);
 
     // Overrides from TransectStyleComplexItem
-    void _rebuildTransectsPhase1        (void) final;
     void _recalcCameraShots             (void) final;
 
 private:
@@ -122,8 +142,6 @@ private:
     double _turnaroundDistance(void) const;
     bool _hoverAndCaptureEnabled(void) const;
     bool _loadV3(const QJsonObject& complexObject, int sequenceNumber, QString& errorString);
-    bool _loadV4V5(const QJsonObject& complexObject, int sequenceNumber, QString& errorString, int version, bool forPresets);
-    void _saveCommon(QJsonObject& complexObject);
     void _rebuildTransectsPhase1Worker(bool refly);
     void _rebuildTransectsPhase1WorkerSinglePolygon(bool refly);
     /// Adds to the _transects array from one polygon

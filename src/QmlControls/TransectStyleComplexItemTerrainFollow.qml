@@ -9,8 +9,9 @@ import QGroundControl.FactSystem
 import QGroundControl.FactControls
 
 ColumnLayout {
+    // visible is set by the owner. It used to be bound to the owner's tabBar id from here, which both reached
+    // outside this component and broke once tab indices could shift.
     spacing: _margin
-    visible: tabBar.currentIndex === 2
 
     property var missionItem
 

@@ -27,6 +27,7 @@ class QGCCorePlugin;
 class QGCMapEngineManager;
 class QGCPalette;
 class QGCPositionManager;
+class RTCMStreamManager;
 class SettingsManager;
 class VideoManager;
 class UTMSPManager;
@@ -41,6 +42,7 @@ Q_MOC_INCLUDE("QGCCorePlugin.h")
 Q_MOC_INCLUDE("QGCMapEngineManager.h")
 Q_MOC_INCLUDE("QGCPalette.h")
 Q_MOC_INCLUDE("PositionManager.h")
+Q_MOC_INCLUDE("RTCMStreamManager.h")
 Q_MOC_INCLUDE("SettingsManager.h")
 Q_MOC_INCLUDE("VideoManager.h")
 #ifdef QGC_UTM_ADAPTER
@@ -83,6 +85,7 @@ public:
 #ifndef QGC_NO_SERIAL_LINK
     Q_PROPERTY(FactGroup*           gpsRtk                  READ    gpsRtkFactGroup         CONSTANT)
 #endif
+    Q_PROPERTY(RTCMStreamManager*   rtcmStreamManager       READ    rtcmStreamManager       CONSTANT)
 #ifndef QGC_AIRLINK_DISABLED
     Q_PROPERTY(AirLinkManager*      airlinkManager          READ    airlinkManager          CONSTANT)
 #endif
@@ -110,6 +113,7 @@ public:
     Q_PROPERTY(qreal zOrderWaypointIndicators   READ zOrderWaypointIndicators   CONSTANT)
     Q_PROPERTY(qreal zOrderTrajectoryLines      READ zOrderTrajectoryLines      CONSTANT)
     Q_PROPERTY(qreal zOrderWaypointLines        READ zOrderWaypointLines        CONSTANT)
+    Q_PROPERTY(qreal zOrderRasterOverlay        READ zOrderRasterOverlay        CONSTANT) ///< z order for user GeoTIFF raster overlay (above base tiles, below mission visuals)
     Q_PROPERTY(bool     hasAPMSupport           READ hasAPMSupport              CONSTANT)
     Q_PROPERTY(bool     hasMAVLinkInspector     READ hasMAVLinkInspector        CONSTANT)
 
@@ -172,6 +176,7 @@ public:
 #ifndef QGC_NO_SERIAL_LINK
     FactGroup*              gpsRtkFactGroup     ()  { return _gpsRtkFactGroup; }
 #endif
+    RTCMStreamManager*      rtcmStreamManager   ()  { return _rtcmStreamManager; }
     ADSBVehicleManager*     adsbVehicleManager  ()  { return _adsbVehicleManager; }
     QmlUnitsConversion*     unitsConversion     ()  { return &_unitsConversion; }
     static QGeoCoordinate   flightMapPosition   ()  { return _coord; }
@@ -191,6 +196,7 @@ public:
     qreal zOrderVehicles            () { return 49; }
     qreal zOrderTrajectoryLines     () { return 48; }
     qreal zOrderWaypointLines       () { return 47; }
+    qreal zOrderRasterOverlay       () { return 40; }
 
 #if defined(QGC_NO_ARDUPILOT_DIALECT)
     bool    hasAPMSupport           () { return false; }
@@ -248,6 +254,7 @@ private:
 #ifndef QGC_NO_SERIAL_LINK
     FactGroup*              _gpsRtkFactGroup        = nullptr;
 #endif
+    RTCMStreamManager*      _rtcmStreamManager      = nullptr;
 #ifndef QGC_AIRLINK_DISABLED
     AirLinkManager*         _airlinkManager         = nullptr;
 #endif

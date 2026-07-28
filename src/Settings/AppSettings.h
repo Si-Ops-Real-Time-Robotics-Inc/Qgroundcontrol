@@ -65,6 +65,8 @@ public:
     Q_PROPERTY(QString photoSavePath            READ photoSavePath              NOTIFY savePathsChanged)
     Q_PROPERTY(QString crashSavePath            READ crashSavePath              NOTIFY savePathsChanged)
     Q_PROPERTY(QString mavlinkActionsSavePath    READ mavlinkActionsSavePath      NOTIFY savePathsChanged)
+    Q_PROPERTY(QString geoTiffSavePath          READ geoTiffSavePath            NOTIFY savePathsChanged)
+    Q_PROPERTY(QString markerSavePath           READ markerSavePath             NOTIFY savePathsChanged)
 
     Q_PROPERTY(QString planFileExtension        MEMBER planFileExtension        CONSTANT)
     Q_PROPERTY(QString missionFileExtension     MEMBER missionFileExtension     CONSTANT)
@@ -84,6 +86,8 @@ public:
     QString photoSavePath         ();
     QString crashSavePath         ();
     QString mavlinkActionsSavePath ();
+    QString geoTiffSavePath       ();
+    QString markerSavePath        ();
 
     // Helper methods for working with firstRunPromptIds QVariant settings string list
     static QList<int> firstRunPromptsIdsVariantToList   (const QVariant& firstRunPromptIds);
@@ -112,6 +116,8 @@ public:
     static constexpr const char* photoDirectory =           QT_TRANSLATE_NOOP("AppSettings", "Photo");
     static constexpr const char* crashDirectory =           QT_TRANSLATE_NOOP("AppSettings", "CrashLogs");
     static constexpr const char* mavlinkActionsDirectory =  QT_TRANSLATE_NOOP("AppSettings", "MavlinkActions");
+    static constexpr const char* geoTiffDirectory =         QT_TRANSLATE_NOOP("AppSettings", "GeoTIFF");
+    static constexpr const char* markerDirectory =          QT_TRANSLATE_NOOP("AppSettings", "Markers");
 
 signals:
     void savePathsChanged();

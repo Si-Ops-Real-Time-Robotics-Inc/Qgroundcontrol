@@ -64,6 +64,8 @@
 #include "SettingsManager.h"
 #include "AppSettings.h"
 #include "ShapeFileHelper.h"
+#include "GeoTiffHelper.h"
+#include "RasterOverlayLayer.h"
 #include "SyslinkComponentController.h"
 #include "UDPLink.h"
 #include "Vehicle.h"
@@ -306,6 +308,8 @@ void QGCApplication::init()
     qmlRegisterType<JoystickConfigController>("QGroundControl.Controllers", 1, 0, "JoystickConfigController");
 
     (void) qmlRegisterSingletonType<ShapeFileHelper>("QGroundControl.ShapeFileHelper", 1, 0, "ShapeFileHelper", [](QQmlEngine *, QJSEngine *) { return new ShapeFileHelper(); });
+    (void) qmlRegisterSingletonType<GeoTiffHelper>("QGroundControl.GeoTiffHelper", 1, 0, "GeoTiffHelper", [](QQmlEngine *, QJSEngine *) { return new GeoTiffHelper(); });
+    qmlRegisterUncreatableType<RasterOverlayLayer>("QGroundControl.GeoTiffHelper", 1, 0, "RasterOverlayLayer", "Reference only");
 
     qmlRegisterSingletonType<QGCMAVLink>("MAVLink", 1, 0, "MAVLink", mavlinkSingletonFactory);
 

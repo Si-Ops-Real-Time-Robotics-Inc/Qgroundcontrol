@@ -24,6 +24,8 @@ Rectangle {
     property string transectValuesHeaderName:       _internalError
     property var    transectValuesComponent:        undefined
     property var    presetsTransectValuesComponent: undefined
+    property bool   cameraSupported:                true    ///< false: pattern has no camera at all, hide every camera related setting
+    property bool   markerCountSupported:           false   ///< true: pattern drops markers, report how many in the statistics
 
     readonly property string _internalError: "Internal Error"
 
@@ -78,13 +80,14 @@ Rectangle {
             TransectStyleComplexItemTabBar {
                 id:                 tabBar
                 Layout.fillWidth:   true
+                showCameraTab:      cameraSupported
             }
 
             // Grid tab
             ColumnLayout {
                 Layout.fillWidth:   true
                 spacing:            _margin
-                visible:            tabBar.currentIndex === 0
+                visible:            tabBar.currentTabName === "grid"
 
                 QGCLabel {
                     Layout.fillWidth:   true
@@ -101,6 +104,7 @@ Rectangle {
                     distanceToSurfaceLabel:         qsTr("Altitude")
                     frontalDistanceLabel:           qsTr("Trigger Dist")
                     sideDistanceLabel:              qsTr("Spacing")
+                    showFrontalDistance:            cameraSupported
                 }
 
                 SectionHeader {
@@ -133,13 +137,15 @@ Rectangle {
                 TransectStyleComplexItemStats {
                     Layout.fillWidth:   true
                     visible:            statsHeader.checked
+                    showPhotoStats:     cameraSupported
+                    showMarkerCount:    markerCountSupported
                 }
             } // Grid Column
 
             // Camera Tab
             CameraCalcCamera {
                 Layout.fillWidth:   true
-                visible:            tabBar.currentIndex === 1
+                visible:            tabBar.currentTabName === "camera"
                 cameraCalc:         _missionItem.cameraCalc
             }
 
@@ -147,7 +153,7 @@ Rectangle {
             TransectStyleComplexItemTerrainFollow {
                 Layout.fillWidth:   true
                 spacing:            _margin
-                visible:            tabBar.currentIndex === 2
+                visible:            tabBar.currentTabName === "terrain"
                 missionItem:        _missionItem
             }
 
@@ -155,7 +161,7 @@ Rectangle {
             ColumnLayout {
                 Layout.fillWidth:   true
                 spacing:            _margin
-                visible:            tabBar.currentIndex === 3
+                visible:            tabBar.currentTabName === "presets"
 
                 QGCLabel {
                     Layout.fillWidth:   true
@@ -234,6 +240,8 @@ Rectangle {
                 TransectStyleComplexItemStats {
                     Layout.fillWidth:   true
                     visible:            presetsStatsHeader.checked
+                    showPhotoStats:     cameraSupported
+                    showMarkerCount:    markerCountSupported
                 }
             } // Main editing column
         } // Top level  Column

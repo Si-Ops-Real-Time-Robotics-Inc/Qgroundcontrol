@@ -24,6 +24,7 @@ GridLayout {
     function saveSettings() {
         subEditConfig.host = hostField.text
         subEditConfig.port = parseInt(portField.text)
+        subEditConfig.autoReconnect = autoReconnectCheckBox.checked
     }
 
     QGCLabel { text: qsTr("Server Address") }
@@ -39,5 +40,12 @@ GridLayout {
         Layout.preferredWidth:  _secondColumnWidth
         text:                   subEditConfig.port.toString()
         inputMethodHints:       Qt.ImhFormattedNumbersOnly
+    }
+
+    QGCCheckBox {
+        id:                 autoReconnectCheckBox
+        Layout.columnSpan:  2
+        text:               qsTr("Automatically reconnect on connection loss")
+        checked:            subEditConfig.autoReconnect
     }
 }

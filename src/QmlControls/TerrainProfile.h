@@ -19,8 +19,10 @@ Q_DECLARE_LOGGING_CATEGORY(TerrainProfileLog)
 class MissionController;
 class QmlObjectListModel;
 class FlightPathSegment;
+class GeoTiffHelper;
 
 Q_MOC_INCLUDE("MissionController.h")
+Q_MOC_INCLUDE("GeoTiffHelper.h")
 
 class TerrainProfile : public QQuickItem
 {
@@ -34,10 +36,15 @@ public:
     Q_PROPERTY(double               pixelsPerMeter      MEMBER _pixelsPerMeter                              NOTIFY pixelsPerMeterChanged)
     Q_PROPERTY(double               minAMSLAlt          MEMBER _minAMSLAlt                                  NOTIFY minAMSLAltChanged)
     Q_PROPERTY(double               maxAMSLAlt          MEMBER _maxAMSLAlt                                  NOTIFY maxAMSLAltChanged)
+    Q_PROPERTY(GeoTiffHelper*       geoTiffHelper       READ geoTiffHelper      WRITE setGeoTiffHelper      NOTIFY geoTiffHelperChanged)
 
     MissionController*  missionController(void) { return _missionController; }
 
     void setMissionController(MissionController* missionController);
+
+    /// Source of the user's loaded DEMs, drawn as an extra comparison line. Null hides that line.
+    GeoTiffHelper* geoTiffHelper(void) { return _geoTiffHelper; }
+    void setGeoTiffHelper(GeoTiffHelper* geoTiffHelper);
 
     // Overrides from QQuickItem
     QSGNode* updatePaintNode(QSGNode* oldNode, QQuickItem::UpdatePaintNodeData* updatePaintNodeData);
@@ -51,6 +58,7 @@ signals:
     void pixelsPerMeterChanged      (void);
     void minAMSLAltChanged          (void);
     void maxAMSLAltChanged          (void);
+    void geoTiffHelperChanged       (void);
     void _updateSignal              (void);
 
 private slots:
@@ -60,6 +68,8 @@ private:
     void    _createGeometry                 (QSGGeometryNode*& geometryNode, QSGGeometry*& geometry, QSGGeometry::DrawingMode drawingMode, const QColor& color);
     void    _updateSegmentCounts            (FlightPathSegment* segment, int& cFlightProfileSegments, int& cTerrainPoints, int& cMissingTerrainSegments, int& cTerrainCollisionSegments, double& minTerrainHeight, double& maxTerrainHeight);
     void    _addTerrainProfileSegment       (FlightPathSegment* segment, double currentDistance, double amslAltRange, QSGGeometry::Point2D* terrainProfileVertices, int& terrainVertexIndex);
+    void    _addDemProfileSegment           (FlightPathSegment* segment, double currentDistance, double amslAltRange, QSGGeometry::Point2D* demVertices, int& demProfileVertexIndex);
+    double  _demSampleHeight                 (FlightPathSegment* segment, double terrainDistance);
     void    _addMissingTerrainSegment       (FlightPathSegment* segment, double currentDistance, QSGGeometry::Point2D* missingTerrainVertices, int& missingTerrainVertexIndex);
     void    _addTerrainCollisionSegment     (FlightPathSegment* segment, double currentDistance, double amslAltRange, QSGGeometry::Point2D* terrainCollisionVertices, int& terrainCollisionVertexIndex);
     void    _addFlightProfileSegment        (FlightPathSegment* segment, double currentDistance, double amslAltRange, QSGGeometry::Point2D* flightProfileVertices, int& flightProfileVertexIndex);
@@ -68,6 +78,8 @@ private:
 
     MissionController*  _missionController =    nullptr;
     QmlObjectListModel* _visualItems =          nullptr;
+    GeoTiffHelper*      _geoTiffHelper =        nullptr;
+    bool                _hasDem =               false;  ///< cached per-paint: any DEM loaded to sample
     double              _visibleWidth =         0;
     double              _pixelsPerMeter =       0;
     double              _minAMSLAlt =           0;

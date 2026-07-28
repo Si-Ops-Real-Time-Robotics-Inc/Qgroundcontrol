@@ -23,6 +23,8 @@
 
 #include <QtCore/QJsonArray>
 
+#include <cmath>
+
 QGC_LOGGING_CATEGORY(TransectStyleComplexItemLog, "TransectStyleComplexItemLog")
 
 TransectStyleComplexItem::TransectStyleComplexItem(PlanMasterController* masterController, bool flyView, QString settingsGroup)
@@ -33,6 +35,10 @@ TransectStyleComplexItem::TransectStyleComplexItem(PlanMasterController* masterC
     , _cameraTriggerInTurnAroundFact    (settingsGroup, _metaDataMap[cameraTriggerInTurnAroundName])
     , _hoverAndCaptureFact              (settingsGroup, _metaDataMap[hoverAndCaptureName])
     , _refly90DegreesFact               (settingsGroup, _metaDataMap[refly90DegreesName])
+    , _yawAtTurnaroundFact              (settingsGroup, _metaDataMap[yawAtTurnaroundName])
+    , _yawAtEveryTurnFact               (settingsGroup, _metaDataMap[yawAtEveryTurnName])
+    , _turnaroundYawRateFact            (settingsGroup, _metaDataMap[turnaroundYawRateName])
+    , _turnaroundYawHoldFact            (settingsGroup, _metaDataMap[turnaroundYawHoldName])
     , _terrainAdjustToleranceFact       (settingsGroup, _metaDataMap[terrainAdjustToleranceName])
     , _terrainAdjustMaxClimbRateFact    (settingsGroup, _metaDataMap[terrainAdjustMaxClimbRateName])
     , _terrainAdjustMaxDescentRateFact  (settingsGroup, _metaDataMap[terrainAdjustMaxDescentRateName])
@@ -53,6 +59,10 @@ TransectStyleComplexItem::TransectStyleComplexItem(PlanMasterController* masterC
     connect(&_terrainAdjustToleranceFact,               &Fact::valueChanged,                this, &TransectStyleComplexItem::_rebuildTransects);
     connect(&_surveyAreaPolygon,                        &QGCMapPolygon::pathChanged,        this, &TransectStyleComplexItem::_rebuildTransects);
     connect(&_cameraTriggerInTurnAroundFact,            &Fact::valueChanged,                this, &TransectStyleComplexItem::_rebuildTransects);
+    connect(&_yawAtTurnaroundFact,                      &Fact::valueChanged,                this, &TransectStyleComplexItem::_rebuildTransects);
+    connect(&_yawAtEveryTurnFact,                       &Fact::valueChanged,                this, &TransectStyleComplexItem::_rebuildTransects);
+    connect(&_turnaroundYawRateFact,                    &Fact::valueChanged,                this, &TransectStyleComplexItem::_rebuildTransects);
+    connect(&_turnaroundYawHoldFact,                    &Fact::valueChanged,                this, &TransectStyleComplexItem::_rebuildTransects);
     connect(_cameraCalc.adjustedFootprintSide(),        &Fact::valueChanged,                this, &TransectStyleComplexItem::_rebuildTransects);
     connect(_cameraCalc.adjustedFootprintFrontal(),     &Fact::valueChanged,                this, &TransectStyleComplexItem::_rebuildTransects);
     connect(_cameraCalc.distanceToSurface(),            &Fact::rawValueChanged,             this, &TransectStyleComplexItem::_rebuildTransects);
@@ -72,6 +82,10 @@ TransectStyleComplexItem::TransectStyleComplexItem(PlanMasterController* masterC
     connect(&_cameraTriggerInTurnAroundFact,            &Fact::valueChanged,            this, &TransectStyleComplexItem::_setDirty);
     connect(&_hoverAndCaptureFact,                      &Fact::valueChanged,            this, &TransectStyleComplexItem::_setDirty);
     connect(&_refly90DegreesFact,                       &Fact::valueChanged,            this, &TransectStyleComplexItem::_setDirty);
+    connect(&_yawAtTurnaroundFact,                      &Fact::valueChanged,            this, &TransectStyleComplexItem::_setDirty);
+    connect(&_yawAtEveryTurnFact,                       &Fact::valueChanged,            this, &TransectStyleComplexItem::_setDirty);
+    connect(&_turnaroundYawRateFact,                    &Fact::valueChanged,            this, &TransectStyleComplexItem::_setDirty);
+    connect(&_turnaroundYawHoldFact,                    &Fact::valueChanged,            this, &TransectStyleComplexItem::_setDirty);
     connect(&_terrainAdjustMaxClimbRateFact,            &Fact::valueChanged,            this, &TransectStyleComplexItem::_setDirty);
     connect(&_terrainAdjustMaxDescentRateFact,          &Fact::valueChanged,            this, &TransectStyleComplexItem::_setDirty);
     connect(&_terrainAdjustToleranceFact,               &Fact::valueChanged,            this, &TransectStyleComplexItem::_setDirty);
@@ -135,6 +149,10 @@ void TransectStyleComplexItem::_save(QJsonObject& complexObject)
     innerObject[cameraTriggerInTurnAroundName] =    _cameraTriggerInTurnAroundFact.rawValue().toBool();
     innerObject[hoverAndCaptureName] =              _hoverAndCaptureFact.rawValue().toBool();
     innerObject[refly90DegreesName] =               _refly90DegreesFact.rawValue().toBool();
+    innerObject[_jsonYawAtTurnaroundKey] =          _yawAtTurnaroundFact.rawValue().toBool();
+    innerObject[_jsonYawAtEveryTurnKey] =           _yawAtEveryTurnFact.rawValue().toBool();
+    innerObject[_jsonTurnaroundYawRateKey] =        _turnaroundYawRateFact.rawValue().toDouble();
+    innerObject[_jsonTurnaroundYawHoldKey] =        _turnaroundYawHoldFact.rawValue().toDouble();
     innerObject[_jsonCameraShotsKey] =              _cameraShots;
 
     if (_cameraCalc.distanceMode() == QGroundControlQmlGlobal::AltitudeModeCalcAboveTerrain) {
@@ -222,6 +240,10 @@ bool TransectStyleComplexItem::_load(const QJsonObject& complexObject, bool forP
         { cameraTriggerInTurnAroundName,    QJsonValue::Bool,   true },
         { hoverAndCaptureName,              QJsonValue::Bool,   true },
         { refly90DegreesName,               QJsonValue::Bool,   true },
+        { _jsonYawAtTurnaroundKey,          QJsonValue::Bool,   false },
+        { _jsonYawAtEveryTurnKey,           QJsonValue::Bool,   false },
+        { _jsonTurnaroundYawRateKey,        QJsonValue::Double, false },
+        { _jsonTurnaroundYawHoldKey,        QJsonValue::Double, false },
         { _jsonCameraCalcKey,               QJsonValue::Object, true },
         { _jsonVisualTransectPointsKey,     QJsonValue::Array,  !forPresets },
         { _jsonItemsKey,                    QJsonValue::Array,  !forPresets },
@@ -264,6 +286,12 @@ bool TransectStyleComplexItem::_load(const QJsonObject& complexObject, bool forP
     _cameraTriggerInTurnAroundFact.setRawValue  (innerObject[cameraTriggerInTurnAroundName].toBool());
     _hoverAndCaptureFact.setRawValue            (innerObject[hoverAndCaptureName].toBool());
     _refly90DegreesFact.setRawValue             (innerObject[refly90DegreesName].toBool());
+
+    // Optional: plans predating turnaround yaw don't have these and must still load
+    _yawAtTurnaroundFact.setRawValue    (innerObject[_jsonYawAtTurnaroundKey].toBool(false));
+    _yawAtEveryTurnFact.setRawValue     (innerObject[_jsonYawAtEveryTurnKey].toBool(false));
+    _turnaroundYawRateFact.setRawValue  (innerObject[_jsonTurnaroundYawRateKey].toDouble(_turnaroundYawRateFact.rawDefaultValue().toDouble()));
+    _turnaroundYawHoldFact.setRawValue  (innerObject[_jsonTurnaroundYawHoldKey].toDouble(_turnaroundYawHoldFact.rawDefaultValue().toDouble()));
 
     // These two keys where not included in initial implementation so they are optional. Without them the values will be
     // incorrect when loaded though.
@@ -380,6 +408,13 @@ double TransectStyleComplexItem::_turnAroundDistance(void) const
 bool TransectStyleComplexItem::hoverAndCaptureAllowed(void) const
 {
     return _controllerVehicle->multiRotor() || _controllerVehicle->vtol();
+}
+
+bool TransectStyleComplexItem::yawAtTurnaroundAllowed(void) const
+{
+    // Note this is intentionally stricter than hoverAndCaptureAllowed which also allows vtol. A vtol flies
+    // transects in fixed wing mode where yaw can't be commanded independently of the flight path.
+    return _controllerVehicle->multiRotor();
 }
 
 void TransectStyleComplexItem::_rebuildTransects(void)
@@ -1039,17 +1074,26 @@ int TransectStyleComplexItem::lastSequenceNumber(void) const
                 break;
             case CoordTypeTurnaround:
             {
-                bool firstEntryTurnaround   = coordIndex == 0;
-                bool lastExitTurnaround     = coordIndex == _rgFlightPathCoordInfo.count() - 1;
+                bool    firstEntryTurnaround    = coordIndex == 0;
+                bool    lastExitTurnaround      = coordIndex == _rgFlightPathCoordInfo.count() - 1;
+                double  turnHeading;
+
                 if (buildState.addTriggerAtFirstAndLastPoint && (firstEntryTurnaround || lastExitTurnaround)) {
                     itemCount += 2; // Waypoint + camera trigger
                 } else {
-                    itemCount++; // Waypoint only
+                    itemCount++;    // Waypoint only
+                }
+                // Setting the waypoint's yaw adds no item, but the ArduPilot rotation does
+                if (buildState.useConditionYaw && _isYawTurnaround(coordIndex, buildState.yawAtEveryTurn, turnHeading)) {
+                    itemCount += 2; // Condition yaw + waypoint to hold on while rotating
                 }
             }
                 break;
             case CoordTypeInteriorHoverTrigger:
                 itemCount += 2; // Waypoint + camera trigger
+                break;
+            case CoordTypeInteriorMarker:
+                itemCount += _itemCountForInteriorMarker();
                 break;
             case CoordTypeSurveyEntry:
                 if (triggerCamera()) {
@@ -1117,7 +1161,7 @@ void TransectStyleComplexItem::appendMissionItems(QList<MissionItem*>& items, QO
     }
 }
 
-void TransectStyleComplexItem::_appendWaypoint(QList<MissionItem*>& items, QObject* missionItemParent, int& seqNum, MAV_FRAME mavFrame, float holdTime, const QGeoCoordinate& coordinate)
+void TransectStyleComplexItem::_appendWaypoint(QList<MissionItem*>& items, QObject* missionItemParent, int& seqNum, MAV_FRAME mavFrame, float holdTime, const QGeoCoordinate& coordinate, double yawDegrees)
 {
     double altitude = _cameraCalc.distanceMode() == QGroundControlQmlGlobal::AltitudeModeCalcAboveTerrain ? coordinate.altitude() : _cameraCalc.distanceToSurface()->rawValue().toDouble();
 
@@ -1127,7 +1171,7 @@ void TransectStyleComplexItem::_appendWaypoint(QList<MissionItem*>& items, QObje
                                         holdTime,
                                         0.0,                                         // No acceptance radius specified
                                         0.0,                                         // Pass through waypoint
-                                        std::numeric_limits<double>::quiet_NaN(),    // Yaw unchanged
+                                        yawDegrees,                                  // NaN for yaw unchanged
                                         coordinate.latitude(),
                                         coordinate.longitude(),
                                         altitude,
@@ -1172,6 +1216,59 @@ void TransectStyleComplexItem::_appendConditionGate(QList<MissionItem*>& items, 
     items.append(item);
 }
 
+void TransectStyleComplexItem::_appendConditionYaw(QList<MissionItem*>& items, QObject* missionItemParent, int& seqNum, double yawDegrees, double yawRateDegPerSecond)
+{
+    MissionItem* item = new MissionItem(seqNum++,
+                                        MAV_CMD_CONDITION_YAW,
+                                        MAV_FRAME_MISSION,
+                                        yawDegrees,                             // Heading
+                                        yawRateDegPerSecond,                    // Rate, 0 = vehicle default
+                                        0,                                      // Shortest direction
+                                        0,                                      // Absolute heading, not relative
+                                        0, 0, 0,                                // param 5-7 unused
+                                        true,                                   // autoContinue
+                                        false,                                  // isCurrentItem
+                                        missionItemParent);
+    items.append(item);
+}
+
+bool TransectStyleComplexItem::_isYawTurnaround(int coordIndex, bool everyTurn, double& headingDegrees) const
+{
+    headingDegrees = qQNaN();
+
+    if (_rgFlightPathCoordInfo[coordIndex].coordType != CoordTypeTurnaround) {
+        return false;
+    }
+
+    for (int i=coordIndex+1; i<_rgFlightPathCoordInfo.count(); i++) {
+        CoordType nextCoordType = _rgFlightPathCoordInfo[i].coordType;
+        if (nextCoordType == CoordTypeInteriorTerrainAdded) {
+            // In AltitudeModeCalcAboveTerrain terrain points are interpolated between the turnaround and the
+            // coord which follows. They are collinear so they don't affect the heading, just skip past them.
+            continue;
+        }
+        if (!everyTurn && nextCoordType != CoordTypeSurveyEntry) {
+            // An exit turnaround: the next leg is the cross-over to the following transect. Only rotate here
+            // if the vehicle is meant to be pointing along every leg it flies.
+            return false;
+        }
+        // Turnarounds sit on the axis of the leg which follows them, so the azimuth from the turnaround to
+        // the next coord is that leg's heading: the transect heading for an entry turnaround, the cross-over
+        // heading for an exit one.
+        headingDegrees = _rgFlightPathCoordInfo[coordIndex].coord.azimuthTo(_rgFlightPathCoordInfo[i].coord);
+        return true;
+    }
+
+    // The last turnaround ends the pattern, there is no following leg to point along
+    return false;
+}
+
+void TransectStyleComplexItem::_appendItemsForInteriorMarker(QList<MissionItem*>& items, QObject* missionItemParent, int& seqNum, MAV_FRAME mavFrame, const QGeoCoordinate& coord)
+{
+    // Nothing to do at the marker itself, just fly through it. Keep in sync with _itemCountForInteriorMarker.
+    _appendWaypoint(items, missionItemParent, seqNum, mavFrame, 0 /* holdTime */, coord);
+}
+
 void TransectStyleComplexItem::_appendCameraTriggerDistance(QList<MissionItem*>& items, QObject* missionItemParent, int& seqNum, float triggerDistance)
 {
     MissionItem* item = new MissionItem(seqNum++,
@@ -1207,6 +1304,18 @@ TransectStyleComplexItem::BuildMissionItemsState_t TransectStyleComplexItem::_bu
     state.useConditionGate          = _controllerVehicle->firmwarePlugin()->supportedMissionCommands(QGCMAVLink::VehicleClassGeneric).contains(MAV_CMD_CONDITION_GATE) &&
             triggerCamera() &&
             !hoverAndCaptureEnabled();
+
+    state.yawToNextTransect         = yawAtTurnaroundAllowed() && _yawAtTurnaroundFact.rawValue().toBool() && state.hasTurnarounds;
+    state.yawAtEveryTurn            = _yawAtEveryTurnFact.rawValue().toBool();
+    state.yawRateDegPerSecond       = _turnaroundYawRateFact.rawValue().toDouble();
+    state.yawHoldTimeSeconds        = _turnaroundYawHoldFact.rawValue().toFloat();
+    // ArduPilot Copter ignores the yaw on a waypoint (WP_YAW_BEHAVIOR governs it) so it needs an explicit
+    // condition yaw. PX4 honors waypoint yaw and won't consider the waypoint reached until the heading is
+    // within MIS_YAW_ERR, so it needs no extra item - and PX4 can reject an entire mission which contains a
+    // command it doesn't recognize, so don't hand it one it may not support.
+    state.useConditionYaw           = state.yawToNextTransect &&
+            _controllerVehicle->apmFirmware() &&
+            _controllerVehicle->firmwarePlugin()->supportedMissionCommands(QGCMAVLink::VehicleClassGeneric).contains(MAV_CMD_CONDITION_YAW);
 
     return state;
 }
@@ -1247,18 +1356,44 @@ void TransectStyleComplexItem::_buildAndAppendMissionItems(QList<MissionItem*>& 
             break;
         case CoordTypeTurnaround:
         {
-            bool firstEntryTurnaround   = coordIndex == 0;
-            bool lastExitTurnaround     = coordIndex == _rgFlightPathCoordInfo.count() - 1;
+            bool    firstEntryTurnaround    = coordIndex == 0;
+            bool    lastExitTurnaround      = coordIndex == _rgFlightPathCoordInfo.count() - 1;
+            double  turnHeading;
+            bool    yawHere                 = buildState.yawToNextTransect && _isYawTurnaround(coordIndex, buildState.yawAtEveryTurn, turnHeading);
+
             if (buildState.addTriggerAtFirstAndLastPoint && (firstEntryTurnaround || lastExitTurnaround)) {
+                // This can emit a condition gate rather than a waypoint, so there is nothing to put the yaw on
                 _appendCameraTriggerDistanceUpdatePoint(items, missionItemParent, seqNum, mavFrame, coordInfo.coord, buildState.useConditionGate, firstEntryTurnaround ? triggerDistance() : 0);
             } else {
-                _appendWaypoint(items, missionItemParent, seqNum, mavFrame, 0 /* holdTime */, coordInfo.coord);
+                // The yaw goes on the waypoint for PX4, which won't consider a waypoint reached until the
+                // heading is within MIS_YAW_ERR. That alone gives PX4 the rotate-then-move behaviour.
+                _appendWaypoint(items, missionItemParent, seqNum, mavFrame, 0 /* holdTime */, coordInfo.coord,
+                                yawHere ? turnHeading : std::numeric_limits<double>::quiet_NaN());
+            }
+
+            if (yawHere && buildState.useConditionYaw) {
+                // ArduPilot needs the rotation broken out into its own commands. A condition yaw does not stop
+                // the vehicle - it only gates following do commands - and it isn't started until the item above
+                // completes, at which point ArduPilot also starts flying to the next waypoint. So the vehicle
+                // would rotate while flying into the next leg, which is exactly what this option prevents.
+                //
+                // Repeating the turnaround as a waypoint after the yaw gives the vehicle somewhere to sit while
+                // it rotates: it is already at that position, so the waypoint completes as soon as its hold
+                // expires, and the hold is what has to cover the rotation. This is appended outside the branch
+                // above because it works whether that emitted a waypoint or a condition gate.
+                _appendConditionYaw(items, missionItemParent, seqNum, turnHeading, buildState.yawRateDegPerSecond);
+                _appendWaypoint(items, missionItemParent, seqNum, mavFrame,
+                                buildState.yawHoldTimeSeconds /* holdTime */,
+                                coordInfo.coord, turnHeading);
             }
         }
             break;
         case CoordTypeInteriorHoverTrigger:
             _appendWaypoint(items, missionItemParent, seqNum, mavFrame, _hoverAndCaptureDelaySeconds, coordInfo.coord);
             _appendSinglePhotoCapture(items, missionItemParent, seqNum);
+            break;
+        case CoordTypeInteriorMarker:
+            _appendItemsForInteriorMarker(items, missionItemParent, seqNum, mavFrame, coordInfo.coord);
             break;
         case CoordTypeSurveyEntry:
             if (triggerCamera()) {

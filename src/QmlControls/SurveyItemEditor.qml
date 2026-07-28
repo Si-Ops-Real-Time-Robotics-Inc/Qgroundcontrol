@@ -35,6 +35,10 @@ TransectStyleComplexItemEditor {
             rowSpacing:         _margin
             columns:            2
 
+            property bool _turnaroundYawSettingsVisible:    missionItem.yawAtTurnaroundAllowed && !forPresets
+            // The rate and hold only do anything while the vehicle is actually being told to rotate
+            property bool _turnaroundYawActive:             missionItem.yawAtTurnaround.rawValue && missionItem.turnAroundDistance.rawValue > 0
+
             QGCLabel { text: qsTr("Angle") }
             FactTextField {
                 fact:                   missionItem.gridAngle
@@ -66,6 +70,30 @@ TransectStyleComplexItemEditor {
                 visible:            !forPresets
             }
 
+            QGCLabel {
+                text:       qsTr("Yaw rate")
+                enabled:    _turnaroundYawActive
+                visible:    _turnaroundYawSettingsVisible
+            }
+            FactTextField {
+                Layout.fillWidth:   true
+                fact:               missionItem.turnaroundYawRate
+                enabled:            _turnaroundYawActive
+                visible:            _turnaroundYawSettingsVisible
+            }
+
+            QGCLabel {
+                text:       qsTr("Yaw hold")
+                enabled:    _turnaroundYawActive
+                visible:    _turnaroundYawSettingsVisible
+            }
+            FactTextField {
+                Layout.fillWidth:   true
+                fact:               missionItem.turnaroundYawHold
+                enabled:            _turnaroundYawActive
+                visible:            _turnaroundYawSettingsVisible
+            }
+
             QGCOptionsComboBox {
                 Layout.columnSpan:  2
                 Layout.fillWidth:   true
@@ -95,6 +123,19 @@ TransectStyleComplexItemEditor {
                         fact:       missionItem.flyAlternateTransects,
                         enabled:    true,
                         visible:    _vehicle ? (_vehicle.fixedWing || _vehicle.vtol) : false
+                    },
+                    {
+                        text:       qsTr("Rotate at turnarounds"),
+                        fact:       missionItem.yawAtTurnaround,
+                        // Without turnarounds there are no points at which to rotate
+                        enabled:    missionItem.turnAroundDistance.rawValue > 0,
+                        visible:    missionItem.yawAtTurnaroundAllowed
+                    },
+                    {
+                        text:       qsTr("Rotate on every turn"),
+                        fact:       missionItem.yawAtEveryTurn,
+                        enabled:    _turnaroundYawActive,
+                        visible:    missionItem.yawAtTurnaroundAllowed
                     }
                 ]
             }

@@ -27,6 +27,7 @@ QGCPopupDialog {
     property var    missionItem
     property var    map
     property bool   flyThroughCommandsAllowed
+    property var    missionController   ///< Needed to swap the item out for a Drop Point
 
     ColumnLayout {
         RowLayout {
@@ -52,6 +53,47 @@ QGCPopupDialog {
                 }
 
                 onActivated: (index) => { categorySelected(textAt(index)) }
+            }
+        }
+
+        // Drop Point isn't a MAVLink command, it expands to three of them, so it can't come from the command
+        // tree like the entries below. Picking it swaps this item out for a Drop Point item instead of
+        // changing this item's command.
+        Rectangle {
+            Layout.fillWidth:       true
+            Layout.preferredHeight: dropPointColumn.height + ScreenTools.defaultFontPixelHeight
+            color:                  QGroundControl.globalPalette.button
+            visible:                !!missionController
+
+            Column {
+                id:                 dropPointColumn
+                anchors.margins:    ScreenTools.defaultFontPixelWidth
+                anchors.left:       parent.left
+                anchors.right:      parent.right
+                anchors.top:        parent.top
+
+                QGCLabel {
+                    text:       qsTr("Drop Point")
+                    color:      QGroundControl.globalPalette.buttonText
+                    font.bold:  true
+                }
+
+                QGCLabel {
+                    anchors.margins:    ScreenTools.defaultFontPixelWidth
+                    anchors.left:       parent.left
+                    anchors.right:      parent.right
+                    text:               qsTr("Hold over the point, cycle a relay to drop a marker, then hold while it runs.")
+                    wrapMode:           Text.WordWrap
+                    color:              QGroundControl.globalPalette.buttonText
+                }
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    missionController.replaceVisualItemWithComplexItem(missionItem, missionController.dropPointComplexItemName)
+                    root.close()
+                }
             }
         }
 

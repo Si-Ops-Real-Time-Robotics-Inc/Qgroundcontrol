@@ -15,6 +15,8 @@
 #include "QGCApplication.h"
 #include "SimpleMissionItem.h"
 #include "SurveyComplexItem.h"
+#include "AutoMarkerComplexItem.h"
+#include "DropPointComplexItem.h"
 #include "FixedWingLandingComplexItem.h"
 #include "VTOLLandingComplexItem.h"
 #include "StructureScanComplexItem.h"
@@ -433,8 +435,12 @@ VisualMissionItem* MissionController::insertComplexMissionItem(QString itemName,
 {
     ComplexMissionItem* newItem = nullptr;
 
-    if (itemName == SurveyComplexItem::name) {
-        newItem = new SurveyComplexItem(_masterController, _flyView, QString() /* kmlOrShpFile */);
+    if (itemName == SurveyComplexItem::name || itemName == AutoMarkerComplexItem::name) {
+        if (itemName == SurveyComplexItem::name) {
+            newItem = new SurveyComplexItem(_masterController, _flyView, QString() /* kmlOrShpFile */);
+        } else {
+            newItem = new AutoMarkerComplexItem(_masterController, _flyView, QString() /* kmlOrShpFile */);
+        }
         newItem->setCoordinate(mapCenterCoordinate);
 
         double                              prevAltitude;
@@ -445,6 +451,9 @@ VisualMissionItem* MissionController::insertComplexMissionItem(QString itemName,
                 qobject_cast<SurveyComplexItem*>(newItem)->cameraCalc()->setDistanceMode(prevAltMode);
             }
         }
+    } else if (itemName == DropPointComplexItem::name) {
+        newItem = new DropPointComplexItem(_masterController, _flyView);
+        newItem->setCoordinate(mapCenterCoordinate);
     } else if (itemName == FixedWingLandingComplexItem::name) {
         newItem = new FixedWingLandingComplexItem(_masterController, _flyView);
     } else if (itemName == VTOLLandingComplexItem::name) {
@@ -469,6 +478,8 @@ VisualMissionItem* MissionController::insertComplexMissionItemFromKMLOrSHP(QStri
 
     if (itemName == SurveyComplexItem::name) {
         newItem = new SurveyComplexItem(_masterController, _flyView, file);
+    } else if (itemName == AutoMarkerComplexItem::name) {
+        newItem = new AutoMarkerComplexItem(_masterController, _flyView, file);
     } else if (itemName == StructureScanComplexItem::name) {
         newItem = new StructureScanComplexItem(_masterController, _flyView, file);
     } else if (itemName == CorridorScanComplexItem::name) {
@@ -538,6 +549,32 @@ void MissionController::_insertComplexMissionItemWorker(const QGeoCoordinate& ma
         setCurrentPlanViewSeqNum(complexItem->sequenceNumber(), true);
     }
     _firstItemAdded();
+}
+
+VisualMissionItem* MissionController::replaceVisualItemWithComplexItem(VisualMissionItem* visualItem, QString complexItemName)
+{
+    if (!visualItem) {
+        qWarning() << "MissionController::replaceVisualItemWithComplexItem called with null item";
+        return nullptr;
+    }
+
+    int viIndex = _visualItems->indexOf(visualItem);
+    if (viIndex <= 0) {
+        qWarning() << "MissionController::replaceVisualItemWithComplexItem item is not in the mission" << complexItemName;
+        return nullptr;
+    }
+
+    if (!visualItem->specifiesCoordinate()) {
+        qWarning() << "MissionController::replaceVisualItemWithComplexItem item has no coordinate to take over" << complexItemName;
+        return nullptr;
+    }
+
+    // Grab the position before the item goes away, so the replacement lands where it was
+    QGeoCoordinate coordinate = visualItem->coordinate();
+
+    removeVisualItem(viIndex);
+
+    return insertComplexMissionItem(complexItemName, coordinate, viIndex, true /* makeCurrentItem */);
 }
 
 void MissionController::removeVisualItem(int viIndex)
@@ -839,6 +876,24 @@ bool MissionController::_loadJsonMissionFileV2(const QJsonObject& json, QmlObjec
                 nextSequenceNumber = surveyItem->lastSequenceNumber() + 1;
                 qCDebug(MissionControllerLog) << "Survey load complete: nextSequenceNumber" << nextSequenceNumber;
                 visualItems->append(surveyItem);
+            } else if (complexItemType == AutoMarkerComplexItem::jsonComplexItemTypeValue) {
+                qCDebug(MissionControllerLog) << "Loading Auto Marker: nextSequenceNumber" << nextSequenceNumber;
+                AutoMarkerComplexItem* autoMarkerItem = new AutoMarkerComplexItem(_masterController, _flyView, QString() /* kmlOrShpFile */);
+                if (!autoMarkerItem->load(itemObject, nextSequenceNumber++, errorString)) {
+                    return false;
+                }
+                nextSequenceNumber = autoMarkerItem->lastSequenceNumber() + 1;
+                qCDebug(MissionControllerLog) << "Auto Marker load complete: nextSequenceNumber" << nextSequenceNumber;
+                visualItems->append(autoMarkerItem);
+            } else if (complexItemType == DropPointComplexItem::jsonComplexItemTypeValue) {
+                qCDebug(MissionControllerLog) << "Loading Drop Point: nextSequenceNumber" << nextSequenceNumber;
+                DropPointComplexItem* dropPointItem = new DropPointComplexItem(_masterController, _flyView);
+                if (!dropPointItem->load(itemObject, nextSequenceNumber++, errorString)) {
+                    return false;
+                }
+                nextSequenceNumber = dropPointItem->lastSequenceNumber() + 1;
+                qCDebug(MissionControllerLog) << "Drop Point load complete: nextSequenceNumber" << nextSequenceNumber;
+                visualItems->append(dropPointItem);
             } else if (complexItemType == FixedWingLandingComplexItem::jsonComplexItemTypeValue) {
                 qCDebug(MissionControllerLog) << "Loading Fixed Wing Landing Pattern: nextSequenceNumber" << nextSequenceNumber;
                 FixedWingLandingComplexItem* landingItem = new FixedWingLandingComplexItem(_masterController, _flyView);
@@ -2265,6 +2320,7 @@ QStringList MissionController::complexMissionItemNames(void) const
     QStringList complexItems;
 
     complexItems.append(SurveyComplexItem::name);
+    complexItems.append(AutoMarkerComplexItem::name);
     complexItems.append(CorridorScanComplexItem::name);
     if (_controllerVehicle->multiRotor() || _controllerVehicle->vtol()) {
         complexItems.append(StructureScanComplexItem::name);
@@ -2670,6 +2726,11 @@ void MissionController::_forceRecalcOfAllowedBits(void)
 QString MissionController::surveyComplexItemName(void) const
 {
     return SurveyComplexItem::name;
+}
+
+QString MissionController::dropPointComplexItemName(void) const
+{
+    return DropPointComplexItem::name;
 }
 
 QString MissionController::corridorScanComplexItemName(void) const

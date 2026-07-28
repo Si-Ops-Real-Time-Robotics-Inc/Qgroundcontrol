@@ -20,6 +20,7 @@
 
 class QTcpSocket;
 class QThread;
+class QTimer;
 
 Q_DECLARE_LOGGING_CATEGORY(TCPLinkLog)
 
@@ -31,6 +32,7 @@ class TCPConfiguration : public LinkConfiguration
 
     Q_PROPERTY(QString host READ host WRITE setHost NOTIFY hostChanged)
     Q_PROPERTY(quint16 port READ port WRITE setPort NOTIFY portChanged)
+    Q_PROPERTY(bool autoReconnect READ autoReconnect WRITE setAutoReconnect NOTIFY autoReconnectChanged)
 
 public:
     explicit TCPConfiguration(const QString &name, QObject *parent = nullptr);
@@ -48,14 +50,18 @@ public:
     void setHost(const QString &host) { if (host != _host.toString()) { _host.setAddress(host); emit hostChanged(); } }
     quint16 port() const { return _port; }
     void setPort(quint16 port) { if (port != _port) { _port = port; emit portChanged(); } }
+    bool autoReconnect() const { return _autoReconnect; }
+    void setAutoReconnect(bool autoReconnect) { if (autoReconnect != _autoReconnect) { _autoReconnect = autoReconnect; emit autoReconnectChanged(); } }
 
 signals:
     void hostChanged();
     void portChanged();
+    void autoReconnectChanged();
 
 private:
     QHostAddress _host;
     quint16 _port = 5760;
+    bool _autoReconnect = true;
 };
 
 /*===========================================================================*/
@@ -89,11 +95,15 @@ private slots:
     void _onSocketReadyRead();
     void _onSocketBytesWritten(qint64 bytes);
     void _onSocketErrorOccurred(QAbstractSocket::SocketError socketError);
+    void _attemptReconnect();
 
 private:
     const TCPConfiguration *_config = nullptr;
     QTcpSocket *_socket = nullptr;
+    QTimer *_reconnectTimer = nullptr;
     bool _errorEmitted = false;
+    bool _userDisconnect = false;      ///< true once the user (or vehicle teardown) asked to disconnect - stops auto-reconnect
+    bool _reportedConnected = false;   ///< have we told LinkManager the link is up (and not since torn down)
 };
 
 /*===========================================================================*/

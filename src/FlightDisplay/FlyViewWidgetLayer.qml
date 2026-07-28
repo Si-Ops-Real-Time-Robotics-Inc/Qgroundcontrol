@@ -214,6 +214,19 @@ Item {
         property real topEdgeCenterInset: visible ? y + height : 0
     }
 
+    // Map-layer manager for user GeoTIFF overlays. Shares the layer list with Plan view, so a layer
+    // loaded in either view shows in both. Must live in the widget layer (not inside the map) or the
+    // tool strip, which is drawn above the map, would cover it.
+    MapLayersPanel {
+        anchors.margins:    _toolsMargin
+        anchors.left:       toolStrip.right
+        anchors.top:        mapScale.bottom
+        z:                  QGroundControl.zOrderWidgets
+        map:                mapControl
+        visible:            !QGroundControl.videoManager.fullScreen && !isViewer3DOpen &&
+                                (mapControl ? mapControl.pipState.state === mapControl.pipState.fullState : false)
+    }
+
     Loader {
         id: preFlightChecklistLoader
         sourceComponent: preFlightChecklistPopup

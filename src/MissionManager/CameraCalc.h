@@ -78,6 +78,10 @@ public:
     QGroundControlQmlGlobal::AltMode distanceMode(void) const { return _distanceMode; }
 
     void setDistanceMode                (QGroundControlQmlGlobal::AltMode altMode);
+
+    /// Switches to the manual camera spec, where the user enters transect spacing/trigger distance directly.
+    /// Sets the canonical (untranslated) name which is what isManualCamera() tests against.
+    void setManualCamera                (void) { _cameraNameFact.setRawValue(canonicalManualCameraName()); }
     void setCameraBrand                 (const QString& cameraBrand);
     void setCameraModel                 (const QString& cameraModel);
 

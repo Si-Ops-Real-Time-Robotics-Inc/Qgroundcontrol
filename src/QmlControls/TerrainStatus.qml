@@ -14,6 +14,7 @@ import QGroundControl
 import QGroundControl.ScreenTools
 import QGroundControl.Controls
 import QGroundControl.Palette
+import QGroundControl.GeoTiffHelper
 
 Rectangle {
     id:         root
@@ -107,6 +108,28 @@ Rectangle {
                 }
             }
 
+            // Legend for the DEM comparison line, shown only while a DEM is loaded.
+            Row {
+                id:                 demLegend
+                anchors.top:        parent.top
+                anchors.right:      parent.right
+                anchors.margins:    _margins
+                spacing:            _margins
+                visible:            GeoTiffHelper.hasElevationLayer
+
+                Rectangle {
+                    width:                  ScreenTools.defaultFontPixelWidth * 2
+                    height:                 ScreenTools.defaultFontPixelHeight * 0.35
+                    anchors.verticalCenter: parent.verticalCenter
+                    color:                  "deepskyblue"
+                }
+
+                QGCLabel {
+                    font.pointSize: ScreenTools.smallFontPointSize
+                    text:           qsTr("DEM")
+                }
+            }
+
             TerrainProfile {
                 id:                 terrainProfile
                 x:                  chart.plotArea.x
@@ -114,6 +137,7 @@ Rectangle {
                 height:             chart.plotArea.height
                 visibleWidth:       chart.plotArea.width
                 missionController:  root.missionController
+                geoTiffHelper:      GeoTiffHelper
 
                 Repeater {
                     model: missionController.visualItems

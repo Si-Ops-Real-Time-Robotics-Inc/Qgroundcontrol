@@ -19,6 +19,7 @@ import QGroundControl.Controllers
 import QGroundControl.Controls
 import QGroundControl.FlightDisplay
 import QGroundControl.FlightMap
+import QGroundControl.GeoTiffHelper
 import QGroundControl.Palette
 import QGroundControl.ScreenTools
 import QGroundControl.Vehicle
@@ -47,6 +48,7 @@ FlightMap {
     property real   _toolsMargin:               ScreenTools.defaultFontPixelWidth * 0.75
     property var    _flyViewSettings:           QGroundControl.settingsManager.flyViewSettings
     property bool   _keepMapCenteredOnVehicle:  _flyViewSettings.keepMapCenteredOnVehicle.rawValue
+    property var    _rtcmBaseStatus:            QGroundControl.rtcmStreamManager.rtcmFactGroup
 
     property bool   _disableVehicleTracking:    false
     property bool   _keepVehicleCentered:       pipMode ? true : false
@@ -268,6 +270,15 @@ FlightMap {
             onPointAdded: (coordinate) =>       trajectoryPolyline.addCoordinate(coordinate)
             onUpdateLastPoint: (coordinate) =>  trajectoryPolyline.replaceCoordinate(trajectoryPolyline.pathLength() - 1, coordinate)
             onPointsCleared:                    trajectoryPolyline.path = []
+        }
+    }
+
+    // User-imported GeoTIFF overlay layers (orthomosaics + colorized DEMs), shared with Plan view.
+    MapItemView {
+        model: GeoTiffHelper.layers
+        delegate: RasterOverlayMapItem {
+            map:            _root
+            overlayLayer:   object
         }
     }
 
@@ -617,6 +628,23 @@ FlightMap {
             checked:    true
             index:      -1
             label:      qsTr("Orbit", "Orbit waypoint")
+        }
+    }
+
+    // RTK base station position, decoded from RTCM 1005/1006 of the network correction stream
+    MapQuickItem {
+        id:             rtcmBaseIndicator
+        anchorPoint.x:  sourceItem.anchorPointX
+        anchorPoint.y:  sourceItem.anchorPointY
+        visible:        _rtcmBaseStatus.baseValid.value
+        coordinate:     _rtcmBaseStatus.baseValid.value
+                            ? QtPositioning.coordinate(_rtcmBaseStatus.baseLatitude.value, _rtcmBaseStatus.baseLongitude.value, _rtcmBaseStatus.baseAltitude.value)
+                            : QtPositioning.coordinate()
+
+        sourceItem: MissionItemIndexLabel {
+            checked:    true
+            index:      -1
+            label:      qsTr("RTK Base")
         }
     }
 

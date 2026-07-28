@@ -10,9 +10,15 @@
 #include "SurveyComplexItemTest.h"
 #include "SurveyComplexItem.h"
 #include "PlanViewSettings.h"
+#include "PlanMasterController.h"
 #include "MultiSignalSpy.h"
+#include "SettingsManager.h"
+#include "AppSettings.h"
+#include "QGCMapPolygon.h"
 
 #include <QtTest/QTest>
+
+#include <cmath>
 
 SurveyComplexItemTest::SurveyComplexItemTest(void)
 {
@@ -356,4 +362,133 @@ void SurveyComplexItemTest::_testHoverCaptureItemGeneration(void)
     _surveyItem->hoverAndCapture()->setRawValue(true);
     _testItemGenerationWorker(false /* imagesInTurnaround */, true /* hasTurnaround */, true /* useConditionGate */, expectedCommands);
     _testItemGenerationWorker(false /* imagesInTurnaround */, true /* hasTurnaround */, false /* useConditionGate */, expectedCommands);
+}
+
+void SurveyComplexItemTest::_rebuildSurveyItemForVehicle(int firmwareClass, int vehicleClass)
+{
+    // PlanMasterController pulls the offline vehicle from settings when it is constructed, so the settings
+    // must be changed before it is rebuilt. UnitTest::init restores the defaults for the next test.
+    delete _surveyItem;
+    delete _masterController;
+
+    AppSettings* appSettings = SettingsManager::instance()->appSettings();
+    appSettings->offlineEditingFirmwareClass()->setRawValue(firmwareClass);
+    appSettings->offlineEditingVehicleClass()->setRawValue(vehicleClass);
+
+    _masterController   = new PlanMasterController(this);
+    _controllerVehicle  = _masterController->controllerVehicle();
+    _surveyItem         = new SurveyComplexItem(_masterController, false /* flyView */, QString() /* kmlFile */);
+    _mapPolygon         = _surveyItem->surveyAreaPolygon();
+    _mapPolygon->appendVertices(_polyVertices);
+
+    // Same grid setup as init so that _expectedTransectCount transects are generated
+    double polyWidthDistance  = _polyVertices[0].distanceTo(_polyVertices[1]);
+    double polyHeightDistance = _polyVertices[0].distanceTo(_polyVertices[3]);
+    _surveyItem->cameraCalc()->adjustedFootprintSide()->setRawValue((polyWidthDistance * 0.5) - 1.0);
+    _surveyItem->cameraCalc()->adjustedFootprintFrontal()->setRawValue(polyHeightDistance * 0.25);
+    _surveyItem->gridAngle()->setRawValue(0);
+    QCOMPARE(_surveyItem->_transectCount(), _expectedTransectCount);
+}
+
+void SurveyComplexItemTest::_testTurnaroundYaw(void)
+{
+    // Turnaround yaw only applies to a multirotor. ArduPilot is the only firmware which gets the extra
+    // condition yaw item, and that item is the only part of the feature which changes the item count.
+    _rebuildSurveyItemForVehicle(QGCMAVLink::FirmwareClassArduPilot, QGCMAVLink::VehicleClassMultiRotor);
+    QVERIFY(_surveyItem->yawAtTurnaroundAllowed());
+
+    // Non-default values so the settings are proven to reach the generated items. A rate of 0 is included
+    // because that is the value which asks the vehicle to use its own default rate, so it must not be
+    // rejected by the fact's range.
+    QList<double> rgYawRates = { 45, 0 };
+
+    for (double yawRate : rgYawRates) {
+    _surveyItem->turnaroundYawRate()->setRawValue(yawRate);
+    _surveyItem->turnaroundYawHold()->setRawValue(6);
+    QCOMPARE(_surveyItem->turnaroundYawRate()->rawValue().toDouble(), yawRate);
+
+    for (int yawAtEveryTurn=0; yawAtEveryTurn<2; yawAtEveryTurn++) {
+    _surveyItem->yawAtEveryTurn()->setRawValue(yawAtEveryTurn);
+
+    // Item count with the rotation turned off, keyed by hasTurnaround. Captured by the yawAtTurnaround==0
+    // pass so the yawAtTurnaround==1 pass can prove exactly what the rotation added.
+    int rgBaselineItemCount[2] = { 0, 0 };
+
+    for (int yawAtTurnaround=0; yawAtTurnaround<2; yawAtTurnaround++) {
+        for (int hasTurnaround=0; hasTurnaround<2; hasTurnaround++) {
+            _surveyItem->yawAtTurnaround()->setRawValue(yawAtTurnaround);
+            _surveyItem->turnAroundDistance()->setRawValue(hasTurnaround ? 50 : 0);
+
+            QList<MissionItem*> items;
+            _surveyItem->appendMissionItems(items, this);
+
+            // This is what catches _buildAndAppendMissionItems and lastSequenceNumber disagreeing about the
+            // item count, which would corrupt sequence numbers across the entire plan.
+            QCOMPARE(items.count() - 1, _surveyItem->lastSequenceNumber());
+
+            // Each transect has a turnaround at each end. With yawAtEveryTurn off only the ones leading into a
+            // transect rotate, so one per transect. With it on every turnaround rotates except the very last,
+            // which ends the pattern and so has no following leg to point along.
+            int expectedConditionYaws = 0;
+            if (yawAtTurnaround && hasTurnaround) {
+                expectedConditionYaws = yawAtEveryTurn ? (_expectedTransectCount * 2) - 1 : _expectedTransectCount;
+            }
+            int actualConditionYaws = 0;
+            for (const MissionItem* item : items) {
+                if (item->command() == MAV_CMD_CONDITION_YAW) {
+                    actualConditionYaws++;
+                    QCOMPARE(item->param3(), 0.0);  // Shortest direction
+                    QCOMPARE(item->param4(), 0.0);  // Absolute heading
+                }
+            }
+            QCOMPARE(actualConditionYaws, expectedConditionYaws);
+
+            if (!yawAtTurnaround) {
+                rgBaselineItemCount[hasTurnaround] = items.count();
+            } else {
+                // Only the turnarounds which actually rotate may add items, and exactly two each: the condition
+                // yaw and the waypoint to hold on while rotating. A turnaround which doesn't rotate must still
+                // be the single waypoint it always was.
+                QCOMPARE(items.count(), rgBaselineItemCount[hasTurnaround] + (2 * expectedConditionYaws));
+            }
+
+            // A condition yaw doesn't stop the vehicle, and isn't started until the waypoint before it
+            // completes - at which point the vehicle also starts flying to the waypoint after it. So the
+            // turnaround waypoint must be repeated after the yaw with a hold long enough to cover the
+            // rotation, otherwise the vehicle rotates while flying into the transect, which is the entire
+            // problem this option exists to solve.
+            for (int i=0; i<items.count(); i++) {
+                if (items[i]->command() != MAV_CMD_CONDITION_YAW) {
+                    continue;
+                }
+                QVERIFY(i > 0);
+                QVERIFY(i < items.count() - 1);
+
+                // The turnaround itself is the nearest preceding item which carries a position. It's a
+                // waypoint normally, but a condition gate when the camera trigger is placed at this turnaround.
+                const MissionItem* turnaroundItem = nullptr;
+                for (int j=i-1; j>=0; j--) {
+                    if (items[j]->command() == MAV_CMD_NAV_WAYPOINT || items[j]->command() == MAV_CMD_CONDITION_GATE) {
+                        turnaroundItem = items[j];
+                        break;
+                    }
+                }
+                QVERIFY(turnaroundItem);
+
+                // The vehicle has to be sitting still on the turnaround while it rotates
+                const MissionItem* holdItem = items[i+1];
+                QCOMPARE(holdItem->command(), MAV_CMD_NAV_WAYPOINT);
+                QCOMPARE(holdItem->coordinate(), turnaroundItem->coordinate());
+                QCOMPARE(holdItem->param4(), items[i]->param1());
+
+                // Rate and hold come from the user's settings
+                QCOMPARE(items[i]->param2(), _surveyItem->turnaroundYawRate()->rawValue().toDouble());
+                QCOMPARE(holdItem->param1(), _surveyItem->turnaroundYawHold()->rawValue().toFloat());
+            }
+
+            items.clear();
+        }
+    }
+    }
+    }
 }

@@ -24,4 +24,18 @@ public:
     DEFINE_SETTINGFACT(fixedBasePositionLongitude)
     DEFINE_SETTINGFACT(fixedBasePositionAltitude)
     DEFINE_SETTINGFACT(fixedBasePositionAccuracy)
+
+    // Network RTCM source (NTRIP / TCP / UDP) - feeds RTCM corrections to the vehicle
+    DEFINE_SETTINGFACT(rtcmSourceType)      // 0=None, 1=Serial, 2=NTRIP, 3=TCP, 4=UDP
+    DEFINE_SETTINGFACT(ntripHost)
+    DEFINE_SETTINGFACT(ntripPort)
+    DEFINE_SETTINGFACT(ntripMountpoint)
+    DEFINE_SETTINGFACT(ntripUsername)
+    DEFINE_SETTINGFACT(ntripPassword)
+    DEFINE_SETTINGFACT(ntripSendGGA)
+    DEFINE_SETTINGFACT(tcpHost)
+    DEFINE_SETTINGFACT(tcpPort)
+    DEFINE_SETTINGFACT(udpPort)
+    DEFINE_SETTINGFACT(logRtcmToFile)
+    DEFINE_SETTINGFACT(rtcmLogPath)
 };

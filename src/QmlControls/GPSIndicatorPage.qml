@@ -28,6 +28,15 @@ ToolIndicatorPage {
     property string valueNA:            qsTr("--.--", "No data to display")
     property var    rtkSettings:        QGroundControl.settingsManager.rtkSettings
     property bool   useFixedPosition:   rtkSettings.useFixedBasePosition.rawValue
+    property var    rtcmStreamManager:  QGroundControl.rtcmStreamManager
+    property var    rtcmStatus:         QGroundControl.rtcmStreamManager.rtcmFactGroup
+    property int    rtcmSourceType:     rtkSettings.rtcmSourceType.rawValue
+
+    readonly property int rtcmSourceNone:   0
+    readonly property int rtcmSourceSerial: 1
+    readonly property int rtcmSourceNtrip:  2
+    readonly property int rtcmSourceTcp:    3
+    readonly property int rtcmSourceUdp:    4
 
     contentComponent: Component {
         ColumnLayout {
@@ -87,12 +96,67 @@ ToolIndicatorPage {
                     visible:    QGroundControl.gpsRtk.currentAccuracy.value > 0
                 }
             }
+
+            SettingsGroupLayout {
+                heading:    qsTr("Network RTCM Status")
+                visible:    rtcmStreamManager.active
+
+                LabelledLabel {
+                    label:      qsTr("Source")
+                    labelText:  rtcmStatus.sourceType.valueString
+                }
+
+                LabelledLabel {
+                    label:      qsTr("Stream")
+                    labelText:  rtcmStatus.mountpoint.valueString
+                    visible:    rtcmStatus.mountpoint.valueString !== ""
+                }
+
+                LabelledLabel {
+                    label:      qsTr("Status")
+                    labelText:  rtcmStatus.connected.value ? qsTr("Connected") : qsTr("Connecting…")
+                }
+
+                LabelledLabel {
+                    label:      qsTr("Data Rate")
+                    labelText:  rtcmStatus.bytesPerSecond.valueString + qsTr(" B/s")
+                }
+
+                LabelledLabel {
+                    label:      qsTr("Base Station")
+                    labelText:  rtcmStatus.baseValid.value
+                                    ? (rtcmStatus.baseLatitude.valueString + ", " + rtcmStatus.baseLongitude.valueString)
+                                    : qsTr("Waiting…")
+                }
+
+                LabelledLabel {
+                    label:      qsTr("Base Altitude")
+                    labelText:  rtcmStatus.baseAltitude.valueString + qsTr(" m")
+                    visible:    rtcmStatus.baseValid.value
+                }
+
+                LabelledLabel {
+                    label:      qsTr("Log File")
+                    labelText:  rtcmStatus.logFileName.valueString
+                    visible:    rtcmStatus.logFileName.valueString !== ""
+                }
+
+                LabelledLabel {
+                    label:      qsTr("Logged")
+                    labelText:  (rtcmStatus.logBytes.value / 1024).toFixed(1) + qsTr(" KB")
+                    visible:    rtcmStatus.logFileName.valueString !== ""
+                }
+            }
         }
     }
 
     expandedComponent: Component {
+        ColumnLayout {
+            spacing: ScreenTools.defaultFontPixelHeight / 2
+
         SettingsGroupLayout {
             heading:        qsTr("RTK GPS Settings")
+            Layout.fillWidth: true
 
             property real sliderWidth: ScreenTools.defaultFontPixelWidth * 40
 
@@ -174,6 +238,7 @@ ToolIndicatorPage {
                     rtkSettings.fixedBasePositionAccuracy.rawValue  = QGroundControl.gpsRtk.currentAccuracy.rawValue
                 }
             }
+        }
         }
     }
 }

@@ -20,6 +20,7 @@ QGC_LOGGING_CATEGORY(TCPLinkLog, "qgc.comms.tcplink")
 namespace {
     constexpr int CONNECT_TIMEOUT_MS = 1000;
     constexpr int TYPE_OF_SERVICE = 32; // Set ToS for low delay
+    constexpr int RECONNECT_INTERVAL_MS = 3000; // Auto-reconnect retry interval
 }
 
 /*===========================================================================*/
@@ -34,6 +35,7 @@ TCPConfiguration::TCPConfiguration(const TCPConfiguration *copy, QObject *parent
     : LinkConfiguration(copy, parent)
     , _host(copy->host())
     , _port(copy->port())
+    , _autoReconnect(copy->autoReconnect())
 {
     // qCDebug(TCPLinkLog) << Q_FUNC_INFO << this;
 }
@@ -53,6 +55,7 @@ void TCPConfiguration::copyFrom(const LinkConfiguration *source)
 
     setHost(tcpSource->host());
     setPort(tcpSource->port());
+    setAutoReconnect(tcpSource->autoReconnect());
 }
 
 void TCPConfiguration::loadSettings(QSettings &settings, const QString &root)
@@ -61,6 +64,7 @@ void TCPConfiguration::loadSettings(QSettings &settings, const QString &root)
 
     setHost(settings.value(QStringLiteral("host"), host()).toString());
     setPort(static_cast<quint16>(settings.value(QStringLiteral("port"), port()).toUInt()));
+    setAutoReconnect(settings.value(QStringLiteral("autoReconnect"), autoReconnect()).toBool());
 
     settings.endGroup();
 }
@@ -71,6 +75,7 @@ void TCPConfiguration::saveSettings(QSettings &settings, const QString &root) co
 
     settings.setValue(QStringLiteral("host"), host());
     settings.setValue(QStringLiteral("port"), port());
+    settings.setValue(QStringLiteral("autoReconnect"), autoReconnect());
 
     settings.endGroup();
 }
@@ -121,6 +126,14 @@ void TCPWorker::setupSocket()
             qCDebug(TCPLinkLog) << "TCP Host Found";
         });
     }
+
+    // Auto-reconnect retry timer. Created here (on the worker thread) so it has the correct thread
+    // affinity - the TCPWorker itself is constructed on the GUI thread before moveToThread().
+    Q_ASSERT(!_reconnectTimer);
+    _reconnectTimer = new QTimer(this);
+    _reconnectTimer->setSingleShot(true);
+    _reconnectTimer->setInterval(RECONNECT_INTERVAL_MS);
+    (void) connect(_reconnectTimer, &QTimer::timeout, this, &TCPWorker::_attemptReconnect);
 }
 
 void TCPWorker::connectToHost()
@@ -130,9 +143,12 @@ void TCPWorker::connectToHost()
         return;
     }
 
-    _errorEmitted = false;
+    // Note: _errorEmitted is intentionally NOT reset here. It is reset only on a successful connect
+    // (_onSocketConnected), so repeated auto-reconnect failures surface at most one error popup per
+    // down-cycle instead of spamming one every retry.
 
     qCDebug(TCPLinkLog) << "Attempting to connect to host:" << _config->host() << "port:" << _config->port();
+    _socket->abort(); // ensure a clean socket state on reconnect attempts
     _socket->connectToHost(_config->host(), _config->port());
 
     if (!_socket->waitForConnected(CONNECT_TIMEOUT_MS)) {
@@ -151,8 +167,20 @@ void TCPWorker::connectToHost()
 
 void TCPWorker::disconnectFromHost()
 {
+    // User (or vehicle teardown) asked to disconnect: stop auto-reconnect for good. Must run before the
+    // isConnected() early-return, since during a reconnect wait the socket is not connected but the
+    // retry timer is still active.
+    _userDisconnect = true;
+    if (_reconnectTimer) {
+        _reconnectTimer->stop();
+    }
+
     if (!isConnected()) {
         qCDebug(TCPLinkLog) << "Already disconnected from host:" << _config->host() << "port:" << _config->port();
+        // Socket already down (mid-reconnect, or an initial connect that never succeeded). No socket
+        // signal will fire, so tear the link down now. LinkManager ignores a duplicate via containsLink().
+        _reportedConnected = false;
+        emit disconnected();
         return;
     }
 
@@ -193,14 +221,44 @@ void TCPWorker::_onSocketConnected()
 {
     qCDebug(TCPLinkLog) << "Socket connected:" << _config->host() << _config->port();
     _errorEmitted = false;
-    emit connected();
+    if (_reconnectTimer) {
+        _reconnectTimer->stop();
+    }
+    // Only report "connected" on the first successful connect of this link. On an auto-reconnect we
+    // never told LinkManager it disconnected, so we must not re-announce - the link stays seamless.
+    if (!_reportedConnected) {
+        _reportedConnected = true;
+        emit connected();
+    }
 }
 
 void TCPWorker::_onSocketDisconnected()
 {
     qCDebug(TCPLinkLog) << "Socket disconnected:" << _config->host() << _config->port();
-    _errorEmitted = false;
+
+    if (!_userDisconnect && _config && _config->autoReconnect()) {
+        // Unexpected drop with auto-reconnect enabled: suppress disconnected() so LinkManager keeps the
+        // link (and its MAVLink channel), then retry the socket. The vehicle shows "Communication Lost"
+        // and recovers automatically once the link comes back.
+        qCDebug(TCPLinkLog) << "Auto-reconnect in" << RECONNECT_INTERVAL_MS << "ms";
+        if (_reconnectTimer && !_reconnectTimer->isActive()) {
+            _reconnectTimer->start();
+        }
+        return;
+    }
+
+    // User disconnect, or auto-reconnect disabled: tear the link down (original behavior).
+    _reportedConnected = false;
     emit disconnected();
+}
+
+void TCPWorker::_attemptReconnect()
+{
+    if (_userDisconnect || isConnected()) {
+        return;
+    }
+    qCDebug(TCPLinkLog) << "Reconnect attempt to" << _config->host() << ":" << _config->port();
+    connectToHost();
 }
 
 void TCPWorker::_onSocketReadyRead()

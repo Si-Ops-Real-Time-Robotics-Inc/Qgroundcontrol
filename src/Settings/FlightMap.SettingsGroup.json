@@ -20,6 +20,26 @@
     "shortDesc": "Currently selected elevation map provider",
     "type":      "string",
     "default":   "Copernicus"
+},
+{
+    "name":      "rasterOverlayFile",
+    "shortDesc": "Path to the georeferenced GeoTIFF shown as a map overlay",
+    "type":      "string",
+    "default":   ""
+},
+{
+    "name":      "rasterOverlayVisible",
+    "shortDesc": "Show the GeoTIFF raster overlay on the map",
+    "type":      "bool",
+    "default":   false
+},
+{
+    "name":      "rasterOverlayOpacity",
+    "shortDesc": "Opacity of the GeoTIFF raster overlay",
+    "type":      "double",
+    "min":       0.0,
+    "max":       1.0,
+    "default":   0.7
 }
 ]
 }

@@ -19,6 +19,7 @@ qt_add_qml_module(AppSettingsModule
         PlanViewSettings.qml
         PX4LogTransferSettings.qml
         RemoteIDSettings.qml
+        RTKNtripSettings.qml
         SerialSettings.qml
         SettingsPage.qml
         SettingsPagesModel.qml

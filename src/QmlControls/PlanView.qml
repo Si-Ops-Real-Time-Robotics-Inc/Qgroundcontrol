@@ -24,6 +24,7 @@ import QGroundControl.FactControls
 import QGroundControl.Palette
 import QGroundControl.Controllers
 import QGroundControl.ShapeFileHelper
+import QGroundControl.GeoTiffHelper
 import QGroundControl.FlightDisplay
 import QGroundControl.UTMSP
 
@@ -360,6 +361,24 @@ Item {
             Component.onCompleted: editorMap.center = QGroundControl.flightMapPosition
 
             QGCMapPalette { id: mapPal; lightColors: editorMap.isSatelliteMap }
+
+            // User-imported GeoTIFF overlay layers (orthomosaics + colorized DEMs)
+            MapItemView {
+                model: GeoTiffHelper.layers
+                delegate: RasterOverlayMapItem {
+                    map:            editorMap
+                    overlayLayer:   object
+                }
+            }
+
+            // Map-layer manager: load files + per-layer show/hide + opacity + remove
+            MapLayersPanel {
+                anchors.left:       parent.left
+                anchors.top:        parent.top
+                anchors.leftMargin: _toolsMargin
+                anchors.topMargin:  _toolStripBottom + (_toolsMargin * 2)
+                map:                editorMap
+            }
 
             onZoomLevelChanged: {
                 QGroundControl.flightMapZoom = editorMap.zoomLevel

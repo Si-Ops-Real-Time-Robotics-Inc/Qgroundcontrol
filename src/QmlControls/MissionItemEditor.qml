@@ -163,6 +163,7 @@ Rectangle {
                     vehicle:                    masterController.controllerVehicle
                     missionItem:                _root.missionItem
                     map:                        _root.map
+                    missionController:          _missionController
                     // FIXME: Disabling fly through commands doesn't work since you may need to change from an RTL to something else
                     flyThroughCommandsAllowed:  true //_missionController.flyThroughCommandsAllowed
                 }

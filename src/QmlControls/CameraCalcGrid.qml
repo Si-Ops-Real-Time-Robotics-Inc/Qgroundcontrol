@@ -17,6 +17,7 @@ Column {
     property string distanceToSurfaceLabel
     property string frontalDistanceLabel
     property string sideDistanceLabel
+    property bool   showFrontalDistance:            true    ///< false: pattern has no camera, so there is no trigger distance
 
     property real   _margin:            ScreenTools.defaultFontPixelWidth / 2
     property real   _fieldWidth:        ScreenTools.defaultFontPixelWidth * 10.5
@@ -126,10 +127,14 @@ Column {
             Layout.fillWidth:           true
         }
 
-        QGCLabel { text: frontalDistanceLabel }
+        QGCLabel {
+            text:       frontalDistanceLabel
+            visible:    showFrontalDistance
+        }
         FactTextField {
             Layout.fillWidth:   true
             fact:               cameraCalc.adjustedFootprintFrontal
+            visible:            showFrontalDistance
         }
 
         QGCLabel { text: sideDistanceLabel }

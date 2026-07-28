@@ -1,0 +1,24 @@
+{
+    "version":      1,
+    "fileType":  "FactMetaData",
+    "QGC.MetaData.Facts":
+[
+{
+    "name":             "MarkerDistance",
+    "shortDesc": "Distance between markers along each transect.",
+    "type":             "double",
+    "units":            "m",
+    "min":              0.1,
+    "decimalPlaces":    2,
+    "default":     10
+},
+{
+    "name":             "RelayNumber",
+    "shortDesc": "Relay to cycle at each marker.",
+    "type":             "uint32",
+    "min":              0,
+    "max":              5,
+    "default":     0
+}
+]
+}

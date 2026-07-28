@@ -243,12 +243,34 @@ void AppSettings::_checkSavePathDirectories(void)
         savePathDir.mkdir(photoDirectory);
         savePathDir.mkdir(crashDirectory);
         savePathDir.mkdir(mavlinkActionsDirectory);
+        savePathDir.mkdir(geoTiffDirectory);
+        savePathDir.mkdir(markerDirectory);
     }
 }
 
 void AppSettings::_indoorPaletteChanged(void)
 {
     QGCPalette::setGlobalTheme(indoorPalette()->rawValue().toBool() ? QGCPalette::Dark : QGCPalette::Light);
+}
+
+QString AppSettings::geoTiffSavePath(void)
+{
+    QString path = savePath()->rawValue().toString();
+    if (!path.isEmpty() && QDir(path).exists()) {
+        QDir dir(path);
+        return dir.filePath(geoTiffDirectory);
+    }
+    return QString();
+}
+
+QString AppSettings::markerSavePath(void)
+{
+    QString path = savePath()->rawValue().toString();
+    if (!path.isEmpty() && QDir(path).exists()) {
+        QDir dir(path);
+        return dir.filePath(markerDirectory);
+    }
+    return QString();
 }
 
 QString AppSettings::missionSavePath(void)

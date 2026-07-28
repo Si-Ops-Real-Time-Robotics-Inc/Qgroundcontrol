@@ -96,6 +96,7 @@ qt_add_qml_module(QGroundControlControlsModule
         LabelledLabel.qml
         LogReplayStatusBar.qml
         MainWindowSavedState.qml
+        MapLayersPanel.qml
         MAVLinkChart.qml
         MAVLinkMessageButton.qml
         MissionCommandDialog.qml
@@ -173,6 +174,10 @@ qt_add_qml_module(QGroundControlControlsModule
         FirstRunPrompt.qml
 
         # src/PlanView/
+        AutoMarkerItemEditor.qml
+        AutoMarkerMapVisual.qml
+        DropPointItemEditor.qml
+        DropPointMapVisual.qml
         CameraCalcCamera.qml
         CameraCalcGrid.qml
         CameraSection.qml

@@ -12,6 +12,7 @@
 #include "QmlObjectListModel.h"
 #include "FlightPathSegment.h"
 #include "ComplexMissionItem.h"
+#include "GeoTiffHelper.h"
 #include "QGCLoggingCategory.h"
 #include "QGCApplication.h"
 
@@ -58,6 +59,37 @@ void TerrainProfile::_newVisualItems(void)
     emit _updateSignal();
 }
 
+void TerrainProfile::setGeoTiffHelper(GeoTiffHelper* geoTiffHelper)
+{
+    if (geoTiffHelper != _geoTiffHelper) {
+        if (_geoTiffHelper) {
+            disconnect(_geoTiffHelper, &GeoTiffHelper::demLayersChanged, this, &TerrainProfile::_updateSignal);
+        }
+        _geoTiffHelper = geoTiffHelper;
+        if (_geoTiffHelper) {
+            // Loading/removing a DEM changes the comparison line, so repaint.
+            connect(_geoTiffHelper, &GeoTiffHelper::demLayersChanged, this, &TerrainProfile::_updateSignal, Qt::QueuedConnection);
+        }
+        emit geoTiffHelperChanged();
+        emit _updateSignal();
+    }
+}
+
+double TerrainProfile::_demSampleHeight(FlightPathSegment* segment, double terrainDistance)
+{
+    // Coordinate of a terrain sample: lerp coord1->coord2 by the fraction of the segment traversed.
+    if (!_hasDem) {
+        return qQNaN();
+    }
+    const QGeoCoordinate coord1 = segment->coordinate1();
+    const QGeoCoordinate coord2 = segment->coordinate2();
+    const double totalDistance = segment->totalDistance();
+    const double frac = (totalDistance > 0) ? qBound(0.0, terrainDistance / totalDistance, 1.0) : 0.0;
+    const QGeoCoordinate coord(coord1.latitude()  + (frac * (coord2.latitude()  - coord1.latitude())),
+                               coord1.longitude() + (frac * (coord2.longitude() - coord1.longitude())));
+    return _geoTiffHelper->elevationAt(coord);   // samples every loaded DEM
+}
+
 void TerrainProfile::_createGeometry(QSGGeometryNode*& geometryNode, QSGGeometry*& geometry, QSGGeometry::DrawingMode drawingMode, const QColor& color)
 {
     QSGFlatColorMaterial* terrainMaterial = new QSGFlatColorMaterial;
@@ -89,10 +121,28 @@ void TerrainProfile::_updateSegmentCounts(FlightPathSegment* segment, int& cFlig
     if (_shouldAddMissingTerrainSegment(segment)) {
         cMissingTerrainSegments += 1;
     } else {
-        cTerrainProfilePoints += segment->amslTerrainHeights().count();
-        for (int i=0; i<segment->amslTerrainHeights().count(); i++) {
+        const int count = segment->amslTerrainHeights().count();
+        cTerrainProfilePoints += count;
+        double terrainDistance = 0;
+        for (int i=0; i<count; i++) {
             minTerrainHeight = std::fmin(minTerrainHeight, segment->amslTerrainHeights()[i].value<double>());
             maxTerrainHeight = std::fmax(maxTerrainHeight, segment->amslTerrainHeights()[i].value<double>());
+
+            // When a DEM comparison line is shown, fold its sampled heights into the range so it isn't clipped.
+            if (_hasDem) {
+                if (i == 0) {
+                    // First sample sits at the segment start (terrainDistance stays 0).
+                } else if (i == count - 2) {
+                    terrainDistance += segment->finalDistanceBetween();
+                } else {
+                    terrainDistance += segment->distanceBetween();
+                }
+                const double demHeight = _demSampleHeight(segment, terrainDistance);
+                if (!qIsNaN(demHeight)) {
+                    minTerrainHeight = std::fmin(minTerrainHeight, demHeight);
+                    maxTerrainHeight = std::fmax(maxTerrainHeight, demHeight);
+                }
+            }
         }
     }
     if (segment->terrainCollision()) {
@@ -122,6 +172,38 @@ void TerrainProfile::_addTerrainProfileSegment(FlightPathSegment* segment, doubl
         float x = (currentDistance + terrainDistance) * _pixelsPerMeter;
         float y = height() - (terrainHeightPercent * height());
         terrainVertices[terrainProfileVertexIndex++].set(x, y);
+    }
+}
+
+void TerrainProfile::_addDemProfileSegment(FlightPathSegment* segment, double currentDistance, double amslAltRange, QSGGeometry::Point2D* demVertices, int& demProfileVertexIndex)
+{
+    // Draws the loaded DEMs' surface as a separate comparison line. Sampled at the same
+    // coordinates/spacing as the online terrain line so the two are directly comparable. Display-only.
+    if (!_hasDem) {
+        return;
+    }
+    const int count = segment->amslTerrainHeights().count();
+    double terrainDistance = 0;
+    for (int heightIndex=0; heightIndex<count; heightIndex++) {
+        // Move along the x axis (distance), matching _addTerrainProfileSegment's stepping exactly.
+        if (heightIndex == 0) {
+            // The first point in the segment is at the position of the last point. So nothing to do here.
+        } else if (heightIndex == count - 2) {
+            terrainDistance += segment->finalDistanceBetween();
+        } else {
+            terrainDistance += segment->distanceBetween();
+        }
+
+        // Sample the DEM; where it has no data fall back to the online terrain so the strip stays continuous.
+        double demHeight = _demSampleHeight(segment, terrainDistance);
+        if (qIsNaN(demHeight)) {
+            demHeight = segment->amslTerrainHeights()[heightIndex].value<double>();
+        }
+        double heightPercent = (demHeight - _minAMSLAlt) / amslAltRange;
+
+        float x = (currentDistance + terrainDistance) * _pixelsPerMeter;
+        float y = height() - (heightPercent * height());
+        demVertices[demProfileVertexIndex++].set(x, y);
     }
 }
 
@@ -216,12 +298,16 @@ QSGNode* TerrainProfile::updatePaintNode(QSGNode* oldNode, QQuickItem::UpdatePai
     QSGGeometry*    missingTerrainGeometry =    nullptr;
     QSGGeometry*    flightProfileGeometry =     nullptr;
     QSGGeometry*    terrainCollisionGeometry =  nullptr;
+    QSGGeometry*    demProfileGeometry =        nullptr;
     int             cTerrainProfilePoints =     0;
     int             cMissingTerrainSegments =   0;
     int             cFlightProfileSegments =    0;
     int             cTerrainCollisionSegments = 0;
     double          minTerrainHeight =          qQNaN();
     double          maxTerrainHeight =          qQNaN();
+
+    // Cached for this paint pass: sampling the DEMs is only worthwhile while at least one is loaded.
+    _hasDem = _geoTiffHelper && _geoTiffHelper->hasElevationLayer();
 
     // First we need to determine:
     //  - how many terrain profile vertices we need
@@ -276,16 +362,19 @@ QSGNode* TerrainProfile::updatePaintNode(QSGNode* oldNode, QQuickItem::UpdatePai
         QSGGeometryNode* missingTerrainNode =   nullptr;
         QSGGeometryNode* flightProfileNode =    nullptr;
         QSGGeometryNode* terrainCollisionNode = nullptr;
+        QSGGeometryNode* demProfileNode =       nullptr;
 
         _createGeometry(terrainProfileNode,     terrainProfileGeometry,     QSGGeometry::DrawLineStrip, "green");
         _createGeometry(missingTerrainNode,     missingTerrainGeometry,     QSGGeometry::DrawLines,     "yellow");
         _createGeometry(flightProfileNode,      flightProfileGeometry,      QSGGeometry::DrawLines,     "orange");
         _createGeometry(terrainCollisionNode,   terrainCollisionGeometry,   QSGGeometry::DrawLines,     "red");
+        _createGeometry(demProfileNode,         demProfileGeometry,         QSGGeometry::DrawLineStrip, "deepskyblue");
 
         rootNode->appendChildNode(terrainProfileNode);
         rootNode->appendChildNode(missingTerrainNode);
         rootNode->appendChildNode(flightProfileNode);
         rootNode->appendChildNode(terrainCollisionNode);
+        rootNode->appendChildNode(demProfileNode);
     }
 
     // Allocate space for the vertices
@@ -310,15 +399,24 @@ QSGNode* TerrainProfile::updatePaintNode(QSGNode* oldNode, QQuickItem::UpdatePai
     terrainCollisionGeometry->allocate(cTerrainCollisionSegments * 2);
     node->markDirty(QSGNode::DirtyGeometry);
 
+    // The DEM comparison line samples one vertex per online-terrain sample, so it matches that count.
+    const int cDemProfilePoints = _hasDem ? cTerrainProfilePoints : 0;
+    node = rootNode->childAtIndex(4);
+    demProfileGeometry = static_cast<QSGGeometryNode*>(node)->geometry();
+    demProfileGeometry->allocate(cDemProfilePoints);
+    node->markDirty(QSGNode::DirtyGeometry);
+
     int                     flightProfileVertexIndex =          0;
     int                     terrainProfileVertexIndex =         0;
     int                     missingterrainProfileVertexIndex =  0;
     int                     terrainCollisionVertexIndex =       0;
+    int                     demProfileVertexIndex =             0;
     double                  currentDistance =                   0;
     QSGGeometry::Point2D*   flightProfileVertices =             flightProfileGeometry->vertexDataAsPoint2D();
     QSGGeometry::Point2D*   terrainProfileVertices =            terrainProfileGeometry->vertexDataAsPoint2D();
     QSGGeometry::Point2D*   missingTerrainVertices =            missingTerrainGeometry->vertexDataAsPoint2D();
     QSGGeometry::Point2D*   terrainCollisionVertices =          terrainCollisionGeometry->vertexDataAsPoint2D();
+    QSGGeometry::Point2D*   demProfileVertices =                cDemProfilePoints ? demProfileGeometry->vertexDataAsPoint2D() : nullptr;
 
     // This step places the vertices for display into the nodes
     for (int viIndex=0; viIndex<_visualItems->count(); viIndex++) {
@@ -336,6 +434,9 @@ QSGNode* TerrainProfile::updatePaintNode(QSGNode* oldNode, QQuickItem::UpdatePai
                     _addTerrainProfileSegment   (segment, currentDistance, amslAltRange,    terrainProfileVertices,     terrainProfileVertexIndex);
                     _addMissingTerrainSegment   (segment, currentDistance,                  missingTerrainVertices,     missingterrainProfileVertexIndex);
                     _addTerrainCollisionSegment (segment, currentDistance, amslAltRange,    terrainCollisionVertices,   terrainCollisionVertexIndex);
+                    if (demProfileVertices) {
+                        _addDemProfileSegment   (segment, currentDistance, amslAltRange,    demProfileVertices,         demProfileVertexIndex);
+                    }
 
                     currentDistance += segment->totalDistance();
                 }
@@ -349,6 +450,9 @@ QSGNode* TerrainProfile::updatePaintNode(QSGNode* oldNode, QQuickItem::UpdatePai
             _addTerrainProfileSegment   (segment, currentDistance, amslAltRange,    terrainProfileVertices,     terrainProfileVertexIndex);
             _addMissingTerrainSegment   (segment, currentDistance,                  missingTerrainVertices,     missingterrainProfileVertexIndex);
             _addTerrainCollisionSegment (segment, currentDistance, amslAltRange,    terrainCollisionVertices,   terrainCollisionVertexIndex);
+            if (demProfileVertices) {
+                _addDemProfileSegment   (segment, currentDistance, amslAltRange,    demProfileVertices,         demProfileVertexIndex);
+            }
 
             currentDistance += segment->totalDistance();
         }

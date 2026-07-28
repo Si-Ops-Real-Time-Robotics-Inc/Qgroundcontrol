@@ -37,6 +37,7 @@ private slots:
     void _testItemGeneration(void);
     void _testItemCount(void);
     void _testHoverCaptureItemGeneration(void);
+    void _testTurnaroundYaw(void);
 #else
     // Handy mechanism to to a single test
 private slots:
@@ -53,6 +54,7 @@ private:
     double          _clampGridAngle180(double gridAngle);
     QList<MAV_CMD>  _createExpectedCommands(bool hasTurnaround, bool useConditionGate);
     void            _testItemGenerationWorker(bool imagesInTurnaround, bool hasTurnaround, bool useConditionGate, const QList<MAV_CMD>& expectedCommands);
+    void            _rebuildSurveyItemForVehicle(int firmwareClass, int vehicleClass);
 
     // SurveyComplexItem signals
 

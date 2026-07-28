@@ -23,4 +23,7 @@ public:
     DEFINE_SETTINGFACT(mapProvider)
     DEFINE_SETTINGFACT(mapType)
     DEFINE_SETTINGFACT(elevationMapProvider)
+    DEFINE_SETTINGFACT(rasterOverlayFile)
+    DEFINE_SETTINGFACT(rasterOverlayVisible)
+    DEFINE_SETTINGFACT(rasterOverlayOpacity)
 };

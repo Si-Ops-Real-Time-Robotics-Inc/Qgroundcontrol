@@ -29,11 +29,16 @@ QGC_LOGGING_CATEGORY(SurveyComplexItemLog, "SurveyComplexItemLog")
 const QString SurveyComplexItem::name(SurveyComplexItem::tr("Survey"));
 
 SurveyComplexItem::SurveyComplexItem(PlanMasterController* masterController, bool flyView, const QString& kmlOrShpFile)
-    : TransectStyleComplexItem  (masterController, flyView, settingsGroup)
+    : SurveyComplexItem(masterController, flyView, kmlOrShpFile, settingsGroup)
+{
+}
+
+SurveyComplexItem::SurveyComplexItem(PlanMasterController* masterController, bool flyView, const QString& kmlOrShpFile, const QString& settingsGroupName)
+    : TransectStyleComplexItem  (masterController, flyView, settingsGroupName)
     , _metaDataMap              (FactMetaData::createMapFromJsonFile(QStringLiteral(":/json/Survey.SettingsGroup.json"), this))
-    , _gridAngleFact            (settingsGroup, _metaDataMap[gridAngleName])
-    , _flyAlternateTransectsFact(settingsGroup, _metaDataMap[flyAlternateTransectsName])
-    , _splitConcavePolygonsFact (settingsGroup, _metaDataMap[splitConcavePolygonsName])
+    , _gridAngleFact            (settingsGroupName, _metaDataMap[gridAngleName])
+    , _flyAlternateTransectsFact(settingsGroupName, _metaDataMap[flyAlternateTransectsName])
+    , _splitConcavePolygonsFact (settingsGroupName, _metaDataMap[splitConcavePolygonsName])
     , _entryPoint               (EntryLocationTopLeft)
 {
     _editorQml = "qrc:/qml/QGroundControl/Controls/SurveyItemEditor.qml";
@@ -90,7 +95,7 @@ void SurveyComplexItem::_saveCommon(QJsonObject& saveObject)
 
     saveObject[JsonHelper::jsonVersionKey] =                    5;
     saveObject[VisualMissionItem::jsonTypeKey] =                VisualMissionItem::jsonTypeComplexItemValue;
-    saveObject[ComplexMissionItem::jsonComplexItemTypeKey] =    jsonComplexItemTypeValue;
+    saveObject[ComplexMissionItem::jsonComplexItemTypeKey] =    complexItemTypeValue();
     saveObject[_jsonGridAngleKey] =                             _gridAngleFact.rawValue().toDouble();
     saveObject[_jsonFlyAlternateTransectsKey] =                 _flyAlternateTransectsFact.rawValue().toBool();
     saveObject[_jsonSplitConcavePolygonsKey] =                  _splitConcavePolygonsFact.rawValue().toBool();
@@ -179,7 +184,7 @@ bool SurveyComplexItem::_loadV4V5(const QJsonObject& complexObject, int sequence
 
     QString itemType = complexObject[VisualMissionItem::jsonTypeKey].toString();
     QString complexType = complexObject[ComplexMissionItem::jsonComplexItemTypeKey].toString();
-    if (itemType != VisualMissionItem::jsonTypeComplexItemValue || complexType != jsonComplexItemTypeValue) {
+    if (itemType != VisualMissionItem::jsonTypeComplexItemValue || complexType != complexItemTypeValue()) {
         errorString = tr("%1 does not support loading this complex mission item type: %2:%3").arg(qgcApp()->applicationName()).arg(itemType).arg(complexType);
         return false;
     }
@@ -627,6 +632,24 @@ double SurveyComplexItem::_turnaroundDistance(void) const
     return _turnAroundDistanceFact.rawValue().toDouble();
 }
 
+void SurveyComplexItem::_appendInteriorTransectPoints(QList<CoordInfo_t>& coordInfoTransect, const QGeoCoordinate& entryCoord, const QGeoCoordinate& exitCoord)
+{
+    // For hover and capture we need points for each camera location within the transect
+    if (triggerCamera() && hoverAndCaptureEnabled()) {
+        double transectLength = entryCoord.distanceTo(exitCoord);
+        double transectAzimuth = entryCoord.azimuthTo(exitCoord);
+        if (triggerDistance() < transectLength) {
+            int cInnerHoverPoints = static_cast<int>(floor(transectLength / triggerDistance()));
+            qCDebug(SurveyComplexItemLog) << "cInnerHoverPoints" << cInnerHoverPoints;
+            for (int i=0; i<cInnerHoverPoints; i++) {
+                QGeoCoordinate hoverCoord = entryCoord.atDistanceAndAzimuth(triggerDistance() * (i + 1), transectAzimuth);
+                TransectStyleComplexItem::CoordInfo_t coordInfo = { hoverCoord, CoordTypeInteriorHoverTrigger };
+                coordInfoTransect.insert(1 + i, coordInfo);
+            }
+        }
+    }
+}
+
 void SurveyComplexItem::_rebuildTransectsPhase1(void)
 {
     _rebuildTransectsPhase1WorkerSinglePolygon(false /* refly */);
@@ -813,20 +836,7 @@ void SurveyComplexItem::_rebuildTransectsPhase1WorkerSinglePolygon(bool refly)
         coordInfo = { transect[1], CoordTypeSurveyExit };
         coordInfoTransect.append(coordInfo);
 
-        // For hover and capture we need points for each camera location within the transect
-        if (triggerCamera() && hoverAndCaptureEnabled()) {
-            double transectLength = transect[0].distanceTo(transect[1]);
-            double transectAzimuth = transect[0].azimuthTo(transect[1]);
-            if (triggerDistance() < transectLength) {
-                int cInnerHoverPoints = static_cast<int>(floor(transectLength / triggerDistance()));
-                qCDebug(SurveyComplexItemLog) << "cInnerHoverPoints" << cInnerHoverPoints;
-                for (int i=0; i<cInnerHoverPoints; i++) {
-                    QGeoCoordinate hoverCoord = transect[0].atDistanceAndAzimuth(triggerDistance() * (i + 1), transectAzimuth);
-                    TransectStyleComplexItem::CoordInfo_t coordInfo = { hoverCoord, CoordTypeInteriorHoverTrigger };
-                    coordInfoTransect.insert(1 + i, coordInfo);
-                }
-            }
-        }
+        _appendInteriorTransectPoints(coordInfoTransect, transect[0], transect[1]);
 
         // Extend the transect ends for turnaround
         if (_hasTurnaround()) {

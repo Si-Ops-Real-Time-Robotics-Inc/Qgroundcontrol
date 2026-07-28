@@ -1,0 +1,31 @@
+{
+    "version":      1,
+    "fileType":  "FactMetaData",
+    "QGC.MetaData.Facts":
+[
+{
+    "name":             "Altitude",
+    "shortDesc": "Altitude of the drop point, relative to home.",
+    "type":             "double",
+    "units":            "m",
+    "decimalPlaces":    2,
+    "default":     50
+},
+{
+    "name":             "RelayNumber",
+    "shortDesc": "Relay to cycle at the drop point.",
+    "type":             "uint32",
+    "min":              0,
+    "max":              5,
+    "default":     0
+},
+{
+    "name":             "Position",
+    "shortDesc": "Which drop action to perform. Position N cycles the relay N times over N seconds, then holds for N + 0.5 seconds.",
+    "type":             "uint32",
+    "min":              1,
+    "max":              6,
+    "default":     1
+}
+]
+}

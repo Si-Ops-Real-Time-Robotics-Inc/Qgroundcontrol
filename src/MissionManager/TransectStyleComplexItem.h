@@ -18,6 +18,8 @@
 
 #include <QtCore/QLoggingCategory>
 
+#include <limits>
+
 Q_DECLARE_LOGGING_CATEGORY(TransectStyleComplexItemLog)
 
 class PlanMasterController;
@@ -35,6 +37,11 @@ public:
     Q_PROPERTY(Fact*            cameraTriggerInTurnAround   READ cameraTriggerInTurnAround                          CONSTANT)
     Q_PROPERTY(Fact*            hoverAndCapture             READ hoverAndCapture                                    CONSTANT)
     Q_PROPERTY(Fact*            refly90Degrees              READ refly90Degrees                                     CONSTANT)
+    Q_PROPERTY(Fact*            yawAtTurnaround             READ yawAtTurnaround                                    CONSTANT)
+    Q_PROPERTY(Fact*            yawAtEveryTurn              READ yawAtEveryTurn                                     CONSTANT)
+    Q_PROPERTY(Fact*            turnaroundYawRate           READ turnaroundYawRate                                  CONSTANT)
+    Q_PROPERTY(Fact*            turnaroundYawHold           READ turnaroundYawHold                                  CONSTANT)
+    Q_PROPERTY(bool             yawAtTurnaroundAllowed      READ yawAtTurnaroundAllowed                             CONSTANT)
 
     Q_PROPERTY(int              cameraShots                 READ cameraShots                                        NOTIFY cameraShotsChanged)
     Q_PROPERTY(double           timeBetweenShots            READ timeBetweenShots                                   NOTIFY timeBetweenShotsChanged)
@@ -54,6 +61,10 @@ public:
     Fact* cameraTriggerInTurnAround     (void) { return &_cameraTriggerInTurnAroundFact; }
     Fact* hoverAndCapture               (void) { return &_hoverAndCaptureFact; }
     Fact* refly90Degrees                (void) { return &_refly90DegreesFact; }
+    Fact* yawAtTurnaround               (void) { return &_yawAtTurnaroundFact; }
+    Fact* yawAtEveryTurn                (void) { return &_yawAtEveryTurnFact; }
+    Fact* turnaroundYawRate             (void) { return &_turnaroundYawRateFact; }
+    Fact* turnaroundYawHold             (void) { return &_turnaroundYawHoldFact; }
     Fact* terrainAdjustTolerance        (void) { return &_terrainAdjustToleranceFact; }
     Fact* terrainAdjustMaxDescentRate   (void) { return &_terrainAdjustMaxDescentRateFact; }
     Fact* terrainAdjustMaxClimbRate     (void) { return &_terrainAdjustMaxClimbRateFact; }
@@ -63,6 +74,9 @@ public:
     int             cameraShots             (void) const { return _cameraShots; }
     double          coveredArea             (void) const;
     bool            hoverAndCaptureAllowed  (void) const;
+    /// Only multirotors can hold a commanded heading through a transect. A vtol flies transects in fixed wing
+    /// mode where yaw can't be commanded independently of the flight path, and fixed wing never can.
+    bool            yawAtTurnaroundAllowed  (void) const;
 
     virtual double  timeBetweenShots        (void) { return 0; } // Most be overridden. Implementation here is needed for unit testing.
 
@@ -115,6 +129,10 @@ public:
     static constexpr const char* cameraTriggerInTurnAroundName         = "CameraTriggerInTurnAround";
     static constexpr const char* hoverAndCaptureName                   = "HoverAndCapture";
     static constexpr const char* refly90DegreesName                    = "Refly90Degrees";
+    static constexpr const char* yawAtTurnaroundName                   = "YawAtTurnaround";
+    static constexpr const char* yawAtEveryTurnName                    = "YawAtEveryTurn";
+    static constexpr const char* turnaroundYawRateName                 = "TurnaroundYawRate";
+    static constexpr const char* turnaroundYawHoldName                 = "TurnaroundYawHold";
     static constexpr const char* terrainAdjustToleranceName            = "TerrainAdjustTolerance";
     static constexpr const char* terrainAdjustMaxClimbRateName         = "TerrainAdjustMaxClimbRate";
     static constexpr const char* terrainAdjustMaxDescentRateName       = "TerrainAdjustMaxDescentRate";
@@ -138,6 +156,7 @@ protected:
     virtual void _rebuildTransectsPhase1    (void) = 0; ///< Rebuilds the _transects array
     virtual void _recalcCameraShots         (void) = 0;
 
+
     void    _save                           (QJsonObject& saveObject);
     bool    _load                           (const QJsonObject& complexObject, bool forPresets, QString& errorString);
     void    _setExitCoordinate              (const QGeoCoordinate& coordinate);
@@ -145,12 +164,25 @@ protected:
     double  _triggerDistance                (void) const;
     bool    _hasTurnaround                  (void) const;
     double  _turnAroundDistance             (void) const;
-    void    _appendWaypoint                 (QList<MissionItem*>& items, QObject* missionItemParent, int& seqNum, MAV_FRAME mavFrame, float holdTime, const QGeoCoordinate& coordinate);
+    void    _appendWaypoint                 (QList<MissionItem*>& items, QObject* missionItemParent, int& seqNum, MAV_FRAME mavFrame, float holdTime, const QGeoCoordinate& coordinate, double yawDegrees = std::numeric_limits<double>::quiet_NaN());
     void    _appendSinglePhotoCapture       (QList<MissionItem*>& items, QObject* missionItemParent, int& seqNum);
     void    _appendConditionGate            (QList<MissionItem*>& items, QObject* missionItemParent, int& seqNum, MAV_FRAME mavFrame, const QGeoCoordinate& coordinate);
+    void    _appendConditionYaw             (QList<MissionItem*>& items, QObject* missionItemParent, int& seqNum, double yawDegrees, double yawRateDegPerSecond);
+    /// True if the vehicle should rotate at the turnaround at @a coordIndex, in which case @a headingDegrees
+    /// is set to the heading of the leg which follows it. With @a everyTurn false only the turnarounds which
+    /// lead into a transect rotate. Shared by item generation and the item count in lastSequenceNumber so the
+    /// two can't disagree.
+    bool    _isYawTurnaround                (int coordIndex, bool everyTurn, double& headingDegrees) const;
+    /// Emits the mission items for a CoordTypeInteriorMarker point. Derived patterns override this to perform
+    /// their own action at each marker. The base implementation just flies through the point.
+    virtual void _appendItemsForInteriorMarker(QList<MissionItem*>& items, QObject* missionItemParent, int& seqNum, MAV_FRAME mavFrame, const QGeoCoordinate& coord);
+    /// Number of items _appendItemsForInteriorMarker emits. Must agree with it, since lastSequenceNumber
+    /// counts the items without building them.
+    virtual int  _itemCountForInteriorMarker(void) const { return 1; }
+
     void    _appendCameraTriggerDistance    (QList<MissionItem*>& items, QObject* missionItemParent, int& seqNum, float triggerDistance);
     void    _appendCameraTriggerDistanceUpdatePoint(QList<MissionItem*>& items, QObject* missionItemParent, int& seqNum, MAV_FRAME mavFrame, const QGeoCoordinate& coordinate, bool useConditionGate, float triggerDistance);
-    void    _buildAndAppendMissionItems     (QList<MissionItem*>& items, QObject* missionItemParent);
+    virtual void _buildAndAppendMissionItems(QList<MissionItem*>& items, QObject* missionItemParent);
     void    _appendLoadedMissionItems       (QList<MissionItem*>& items, QObject* missionItemParent);
     void    _recalcComplexDistance          (void);
 
@@ -162,6 +194,7 @@ protected:
     enum CoordType {
         CoordTypeInterior,              ///< Interior waypoint for flight path only (example: interior corridor point)
         CoordTypeInteriorHoverTrigger,  ///< Interior waypoint for hover and capture trigger
+        CoordTypeInteriorMarker,        ///< Interior waypoint at which a derived pattern emits its own action items
         CoordTypeInteriorTerrainAdded,  ///< Interior waypoint added for terrain
         CoordTypeSurveyEntry,           ///< Waypoint at entry edge of survey polygon
         CoordTypeSurveyExit,            ///< Waypoint at exit edge of survey polygon
@@ -198,6 +231,10 @@ protected:
     SettingsFact _cameraTriggerInTurnAroundFact;
     SettingsFact _hoverAndCaptureFact;
     SettingsFact _refly90DegreesFact;
+    SettingsFact _yawAtTurnaroundFact;
+    SettingsFact _yawAtEveryTurnFact;
+    SettingsFact _turnaroundYawRateFact;
+    SettingsFact _turnaroundYawHoldFact;
     SettingsFact _terrainAdjustToleranceFact;
     SettingsFact _terrainAdjustMaxClimbRateFact;
     SettingsFact _terrainAdjustMaxDescentRateFact;
@@ -208,6 +245,10 @@ protected:
     static constexpr const char* _jsonItemsKey                         = "Items";
     static constexpr const char* _jsonTerrainFlightSpeed               = "TerrainFlightSpeed";
     static constexpr const char* _jsonCameraShotsKey                   = "CameraShots";
+    static constexpr const char* _jsonYawAtTurnaroundKey               = "YawAtTurnaround";
+    static constexpr const char* _jsonYawAtEveryTurnKey                = "YawAtEveryTurn";
+    static constexpr const char* _jsonTurnaroundYawRateKey             = "TurnaroundYawRate";
+    static constexpr const char* _jsonTurnaroundYawHoldKey             = "TurnaroundYawHold";
 
     static constexpr int _terrainQueryTimeoutMsecs=     1000;
     static constexpr int _hoverAndCaptureDelaySeconds = 4;
@@ -225,6 +266,11 @@ private:
         bool hasTurnarounds;
         bool addTriggerAtFirstAndLastPoint;
         bool useConditionGate;
+        bool    yawToNextTransect;          ///< Hold at turnarounds and rotate onto the heading of the leg which follows
+        bool    yawAtEveryTurn;             ///< Rotate at the turn out of a transect too, not just into the next one
+        bool    useConditionYaw;            ///< Emit MAV_CMD_CONDITION_YAW to do the rotating (ArduPilot only)
+        double  yawRateDegPerSecond;
+        float   yawHoldTimeSeconds;
     } BuildMissionItemsState_t;
 
     void    _queryTransectsPathHeightInfo                                   (void);

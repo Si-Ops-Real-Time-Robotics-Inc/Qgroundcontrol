@@ -78,6 +78,98 @@
     "units":                "m",
     "decimalPlaces":        2,
     "qgcRebootRequired":    true
+},
+{
+    "name":                 "rtcmSourceType",
+    "shortDesc":            "RTCM Correction Source",
+    "longDesc":             "Selects where RTCM correction data is obtained from and forwarded to the vehicle.",
+    "type":                 "uint32",
+    "enumStrings":          "None,Serial GPS,NTRIP,TCP,UDP",
+    "enumValues":           "0,1,2,3,4",
+    "default":              0
+},
+{
+    "name":                 "ntripHost",
+    "shortDesc":            "NTRIP Caster Host",
+    "longDesc":             "Hostname or IP address of the NTRIP caster.",
+    "type":                 "string",
+    "default":              ""
+},
+{
+    "name":                 "ntripPort",
+    "shortDesc":            "NTRIP Caster Port",
+    "longDesc":             "TCP port of the NTRIP caster.",
+    "type":                 "uint16",
+    "default":              2101,
+    "min":                  1,
+    "max":                  65535
+},
+{
+    "name":                 "ntripMountpoint",
+    "shortDesc":            "NTRIP Mountpoint",
+    "longDesc":             "Mountpoint / stream name on the NTRIP caster.",
+    "type":                 "string",
+    "default":              ""
+},
+{
+    "name":                 "ntripUsername",
+    "shortDesc":            "NTRIP Username",
+    "longDesc":             "Username for NTRIP caster authentication (leave empty if not required).",
+    "type":                 "string",
+    "default":              ""
+},
+{
+    "name":                 "ntripPassword",
+    "shortDesc":            "NTRIP Password",
+    "longDesc":             "Password for NTRIP caster authentication (leave empty if not required).",
+    "type":                 "string",
+    "default":              ""
+},
+{
+    "name":                 "ntripSendGGA",
+    "shortDesc":            "Send GGA position (VRS)",
+    "longDesc":             "Periodically send the vehicle position as an NMEA GGA sentence to the caster. Required for VRS / network-RTK mountpoints.",
+    "type":                 "bool",
+    "default":              false
+},
+{
+    "name":                 "tcpHost",
+    "shortDesc":            "TCP Host",
+    "longDesc":             "Hostname or IP address of the raw RTCM3 TCP source.",
+    "type":                 "string",
+    "default":              ""
+},
+{
+    "name":                 "tcpPort",
+    "shortDesc":            "TCP Port",
+    "longDesc":             "TCP port of the raw RTCM3 source.",
+    "type":                 "uint16",
+    "default":              2101,
+    "min":                  1,
+    "max":                  65535
+},
+{
+    "name":                 "udpPort",
+    "shortDesc":            "UDP Listen Port",
+    "longDesc":             "Local UDP port to receive raw RTCM3 datagrams on.",
+    "type":                 "uint16",
+    "default":              2101,
+    "min":                  1,
+    "max":                  65535
+},
+{
+    "name":                 "logRtcmToFile",
+    "shortDesc":            "Log RTCM to file",
+    "longDesc":             "Save the incoming raw RTCM3 stream to a file on disk.",
+    "type":                 "bool",
+    "default":              false
+},
+{
+    "name":                 "rtcmLogPath",
+    "shortDesc":            "RTCM Log File",
+    "longDesc":             "Path of the file to save the raw RTCM3 stream to. Leave empty to use a timestamped file in the application log directory.",
+    "type":                 "string",
+    "default":              ""
 }
 ]
 }

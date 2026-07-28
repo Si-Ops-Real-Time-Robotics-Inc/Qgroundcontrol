@@ -104,6 +104,7 @@ public:
     Q_PROPERTY(int                  batteriesRequired               READ batteriesRequired              NOTIFY batteriesRequiredChanged)
     Q_PROPERTY(QGCGeoBoundingCube*  travelBoundingCube              READ travelBoundingCube             NOTIFY missionBoundingCubeChanged)
     Q_PROPERTY(QString              surveyComplexItemName           READ surveyComplexItemName          CONSTANT)
+    Q_PROPERTY(QString              dropPointComplexItemName        READ dropPointComplexItemName       CONSTANT)
     Q_PROPERTY(QString              corridorScanComplexItemName     READ corridorScanComplexItemName    CONSTANT)
     Q_PROPERTY(QString              structureScanComplexItemName    READ structureScanComplexItemName   CONSTANT)
     Q_PROPERTY(bool                 onlyInsertTakeoffValid          MEMBER _onlyInsertTakeoffValid      NOTIFY onlyInsertTakeoffValidChanged)
@@ -121,6 +122,13 @@ public:
     Q_PROPERTY(QGroundControlQmlGlobal::AltMode globalAltitudeModeDefault  READ globalAltitudeModeDefault  NOTIFY globalAltitudeModeChanged)                               ///< Default to use for newly created items
 
     Q_INVOKABLE void removeVisualItem(int viIndex);
+
+    /// Swaps @a visualItem out for a complex item of type @a complexItemName, which takes its place in the
+    /// mission and keeps its position.
+    ///     @param visualItem Item to replace. Must specify a coordinate.
+    ///     @param complexItemName Name of complex item to create (ex: DropPointComplexItem::name)
+    /// @return The new item, nullptr if the replace failed
+    Q_INVOKABLE VisualMissionItem* replaceVisualItemWithComplexItem(VisualMissionItem* visualItem, QString complexItemName);
 
     /// Add a new simple mission item to the list
     ///     @param coordinate: Coordinate for item
@@ -236,6 +244,7 @@ public:
     TakeoffMissionItem* takeoffMissionItem          (void) const { return _takeoffMissionItem; }
     double              progressPct                 (void) const { return _progressPct; }
     QString             surveyComplexItemName       (void) const;
+    QString             dropPointComplexItemName    (void) const;
     QString             corridorScanComplexItemName (void) const;
     QString             structureScanComplexItemName(void) const;
     bool                isInsertTakeoffValid        (void) const;

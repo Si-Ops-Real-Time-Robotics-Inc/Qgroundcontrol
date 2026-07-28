@@ -1,0 +1,81 @@
+{
+    "version":      1,
+    "fileType":  "FactMetaData",
+    "QGC.MetaData.Facts":
+[
+{
+    "name":             "connected",
+    "shortDesc":        "Connected",
+    "type":             "bool",
+    "default":          false
+},
+{
+    "name":             "sourceType",
+    "shortDesc":        "Source",
+    "type":             "string",
+    "default":          "None"
+},
+{
+    "name":             "mountpoint",
+    "shortDesc":        "Stream",
+    "type":             "string",
+    "default":          ""
+},
+{
+    "name":             "bytesPerSecond",
+    "shortDesc":        "Data Rate",
+    "type":             "double",
+    "decimalPlaces":    2,
+    "units":            "B/s",
+    "default":          0
+},
+{
+    "name":             "baseValid",
+    "shortDesc":        "Base Position Valid",
+    "type":             "bool",
+    "default":          false
+},
+{
+    "name":             "baseLatitude",
+    "shortDesc":        "Base Latitude",
+    "type":             "double",
+    "decimalPlaces":    7,
+    "default":          0
+},
+{
+    "name":             "baseLongitude",
+    "shortDesc":        "Base Longitude",
+    "type":             "double",
+    "decimalPlaces":    7,
+    "default":          0
+},
+{
+    "name":             "baseAltitude",
+    "shortDesc":        "Base Altitude",
+    "type":             "double",
+    "decimalPlaces":    2,
+    "units":            "m",
+    "default":          0
+},
+{
+    "name":             "baseStationId",
+    "shortDesc":        "Base Station ID",
+    "type":             "int32",
+    "default":          0
+},
+{
+    "name":             "logFileName",
+    "shortDesc":        "Log File",
+    "type":             "string",
+    "default":          ""
+},
+{
+    "name":             "logBytes",
+    "shortDesc":        "Log Size",
+    "type":             "double",
+    "decimalPlaces":    0,
+    "units":            "B",
+    "default":          0
+}
+]
+}

@@ -34,6 +34,38 @@
     "default":     false
 },
 {
+    "name":             "YawAtTurnaround",
+    "shortDesc": "Stop at each turnaround and rotate to the next transect's heading before flying into it.",
+    "type":             "bool",
+    "default":     false
+},
+{
+    "name":             "YawAtEveryTurn",
+    "shortDesc": "Also rotate at the turn out of a transect, not just at the turn into the next one.",
+    "type":             "bool",
+    "default":     false
+},
+{
+    "name":             "TurnaroundYawRate",
+    "shortDesc": "Rate the vehicle is commanded to rotate at when turning onto the next transect. 0 uses the vehicle's own default rate. Keep this below the vehicle's maximum yaw rate so it can actually achieve it.",
+    "type":             "double",
+    "decimalPlaces":    0,
+    "min":              0,
+    "max":              180,
+    "units":            "deg/s",
+    "default":     30
+},
+{
+    "name":             "TurnaroundYawHold",
+    "shortDesc": "How long to hold at each turnaround for the rotation to complete before flying into the transect.",
+    "type":             "double",
+    "decimalPlaces":    1,
+    "min":              0,
+    "max":              60,
+    "units":            "secs",
+    "default":     4
+},
+{
     "name":             "Refly90Degrees",
     "shortDesc": "Refly the pattern at a 90 degree angle",
     "type":             "bool",

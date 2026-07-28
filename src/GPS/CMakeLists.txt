@@ -1,3 +1,13 @@
+# RTCMMavlink is the shared RTCM->MAVLink forwarder. It has no serial dependency and is
+# reused by the network RTCM sources (src/RTK), so it must compile even in serial-less builds.
+target_sources(${CMAKE_PROJECT_NAME}
+    PRIVATE
+        RTCMMavlink.cc
+        RTCMMavlink.h
+)
+
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 if(QGC_NO_SERIAL_LINK)
     return()
 endif()
@@ -12,16 +22,12 @@ target_sources(${CMAKE_PROJECT_NAME}
         GPSRtk.h
         GPSRTKFactGroup.cc
         GPSRTKFactGroup.h
-        RTCMMavlink.cc
-        RTCMMavlink.h
         satellite_info.h
         sensor_gnss_relative.h
         sensor_gps.h
 )
 
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core)
-
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 #===========================================================================#
 

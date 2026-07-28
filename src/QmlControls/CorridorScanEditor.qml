@@ -33,6 +33,10 @@ TransectStyleComplexItemEditor {
             rowSpacing:     _margin
             columns:        2
 
+            property bool _turnaroundYawSettingsVisible:    _missionItem.yawAtTurnaroundAllowed && !forPresets
+            // The rate and hold only do anything while the vehicle is actually being told to rotate
+            property bool _turnaroundYawActive:             _missionItem.yawAtTurnaround.rawValue && _missionItem.turnAroundDistance.rawValue > 0
+
             QGCLabel { text: qsTr("Width") }
             FactTextField {
                 fact:               _missionItem.corridorWidth
@@ -55,6 +59,47 @@ TransectStyleComplexItemEditor {
                 fact:               _missionItem.cameraTriggerInTurnAround
                 enabled:            _missionItem.hoverAndCaptureAllowed ? !_missionItem.hoverAndCapture.rawValue : true
                 visible:            !forPresets
+            }
+
+            FactCheckBox {
+                Layout.columnSpan:  2
+                text:               qsTr("Rotate at turnarounds")
+                fact:               _missionItem.yawAtTurnaround
+                // Without turnarounds there are no points at which to rotate
+                enabled:            _missionItem.turnAroundDistance.rawValue > 0
+                visible:            _turnaroundYawSettingsVisible
+            }
+
+            FactCheckBox {
+                Layout.columnSpan:  2
+                text:               qsTr("Rotate on every turn")
+                fact:               _missionItem.yawAtEveryTurn
+                enabled:            _turnaroundYawActive
+                visible:            _turnaroundYawSettingsVisible
+            }
+
+            QGCLabel {
+                text:       qsTr("Yaw rate")
+                enabled:    _turnaroundYawActive
+                visible:    _turnaroundYawSettingsVisible
+            }
+            FactTextField {
+                fact:               _missionItem.turnaroundYawRate
+                Layout.fillWidth:   true
+                enabled:            _turnaroundYawActive
+                visible:            _turnaroundYawSettingsVisible
+            }
+
+            QGCLabel {
+                text:       qsTr("Yaw hold")
+                enabled:    _turnaroundYawActive
+                visible:    _turnaroundYawSettingsVisible
+            }
+            FactTextField {
+                fact:               _missionItem.turnaroundYawHold
+                Layout.fillWidth:   true
+                enabled:            _turnaroundYawActive
+                visible:            _turnaroundYawSettingsVisible
             }
         }
     }
