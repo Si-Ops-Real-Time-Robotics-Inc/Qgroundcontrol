@@ -84,8 +84,8 @@
     "shortDesc":            "RTCM Correction Source",
     "longDesc":             "Selects where RTCM correction data is obtained from and forwarded to the vehicle.",
     "type":                 "uint32",
-    "enumStrings":          "None,Serial GPS,NTRIP,TCP,UDP",
-    "enumValues":           "0,1,2,3,4",
+    "enumStrings":          "None,Serial GPS,NTRIP,TCP,UDP,Bluetooth",
+    "enumValues":           "0,1,2,3,4,5",
     "default":              0
 },
 {
@@ -156,6 +156,20 @@
     "default":              2101,
     "min":                  1,
     "max":                  65535
+},
+{
+    "name":                 "bluetoothDeviceName",
+    "shortDesc":            "Bluetooth Device",
+    "longDesc":             "Name of the paired Bluetooth device streaming RTCM3 over the Serial Port Profile.",
+    "type":                 "string",
+    "default":              ""
+},
+{
+    "name":                 "bluetoothDeviceAddress",
+    "shortDesc":            "Bluetooth Address",
+    "longDesc":             "Address of the paired Bluetooth device streaming RTCM3 over the Serial Port Profile.",
+    "type":                 "string",
+    "default":              ""
 },
 {
     "name":                 "logRtcmToFile",

@@ -25,8 +25,8 @@ public:
     DEFINE_SETTINGFACT(fixedBasePositionAltitude)
     DEFINE_SETTINGFACT(fixedBasePositionAccuracy)
 
-    // Network RTCM source (NTRIP / TCP / UDP) - feeds RTCM corrections to the vehicle
-    DEFINE_SETTINGFACT(rtcmSourceType)      // 0=None, 1=Serial, 2=NTRIP, 3=TCP, 4=UDP
+    // Network RTCM source (NTRIP / TCP / UDP / Bluetooth) - feeds RTCM corrections to the vehicle
+    DEFINE_SETTINGFACT(rtcmSourceType)      // 0=None, 1=Serial, 2=NTRIP, 3=TCP, 4=UDP, 5=Bluetooth
     DEFINE_SETTINGFACT(ntripHost)
     DEFINE_SETTINGFACT(ntripPort)
     DEFINE_SETTINGFACT(ntripMountpoint)
@@ -36,6 +36,8 @@ public:
     DEFINE_SETTINGFACT(tcpHost)
     DEFINE_SETTINGFACT(tcpPort)
     DEFINE_SETTINGFACT(udpPort)
+    DEFINE_SETTINGFACT(bluetoothDeviceName)
+    DEFINE_SETTINGFACT(bluetoothDeviceAddress)
     DEFINE_SETTINGFACT(logRtcmToFile)
     DEFINE_SETTINGFACT(rtcmLogPath)
 };

@@ -8,6 +8,10 @@
  ****************************************************************************/
 
 #include "RTCMStreamManager.h"
+#ifdef QGC_ENABLE_BLUETOOTH
+#include "BluetoothRtcmSource.h"
+#endif
+#include "DeviceInfo.h"
 #include "NetworkRTCMFactGroup.h"
 #include "NtripClient.h"
 #include "NtripSourceTable.h"
@@ -22,8 +26,10 @@
 #include "Vehicle.h"
 
 #include <QtCore/qapplicationstatic.h>
+#include <QtCore/QCoreApplication>
 #include <QtCore/QDateTime>
 #include <QtCore/QFileInfo>
+#include <QtCore/QPermissions>
 #include <QtCore/QThread>
 #include <QtPositioning/QGeoCoordinate>
 
@@ -35,11 +41,12 @@ Q_APPLICATION_STATIC(RTCMStreamManager, _rtcmStreamManager);
 
 namespace {
     enum RtcmSourceType {
-        SourceNone   = 0,
-        SourceSerial = 1,
-        SourceNtrip  = 2,
-        SourceTcp    = 3,
-        SourceUdp    = 4
+        SourceNone      = 0,
+        SourceSerial    = 1,
+        SourceNtrip     = 2,
+        SourceTcp       = 3,
+        SourceUdp       = 4,
+        SourceBluetooth = 5
     };
 }
 
@@ -49,6 +56,12 @@ RTCMStreamManager::RTCMStreamManager(QObject *parent)
 {
     _ggaTimer.setInterval(kGGAIntervalMs);
     (void) connect(&_ggaTimer, &QTimer::timeout, this, &RTCMStreamManager::_sendGGATick);
+
+#if defined(QGC_ENABLE_BLUETOOTH) && !defined(Q_OS_ANDROID)
+    // Desktop can answer this without a permission dance; Android cannot, and asking there would
+    // either block or pop a permission dialog at startup - it is probed from the scan path instead.
+    _refreshBluetoothAvailable();
+#endif
 
     RTKSettings *const rtkSettings = SettingsManager::instance()->rtkSettings();
     (void) connect(rtkSettings->rtcmSourceType(), &Fact::rawValueChanged, this, &RTCMStreamManager::_onSourceTypeSettingChanged);
@@ -119,6 +132,40 @@ void RTCMStreamManager::startStream()
         mountLabel = QStringLiteral(":%1").arg(port);
         break;
     }
+    case SourceBluetooth: {
+#ifdef QGC_ENABLE_BLUETOOTH
+        BluetoothRtcmSource::Config config;
+        config.deviceName = rtkSettings->bluetoothDeviceName()->rawValue().toString();
+        config.deviceAddress = rtkSettings->bluetoothDeviceAddress()->rawValue().toString();
+        if (config.deviceAddress.isEmpty()) {
+            _setBluetoothError(tr("Select a Bluetooth device first"));
+            qCWarning(RTCMStreamManagerLog) << "No Bluetooth device selected";
+            return;
+        }
+        // Android needs runtime Bluetooth access. If it is not granted yet the stream is
+        // started again from the permission callback.
+        if (!_withBluetoothPermission([this]() { startStream(); })) {
+            return;
+        }
+        _refreshBluetoothAvailable();
+        if (!_bluetoothAvailable) {
+            _setBluetoothError(tr("No Bluetooth adapter available"));
+            return;
+        }
+        // An active discovery starves the RFCOMM connection on some stacks (notably Android).
+        stopBluetoothScan();
+        _setBluetoothError(QString());
+        _worker = new BluetoothRtcmSource(config);
+        sourceLabel = QStringLiteral("Bluetooth");
+        mountLabel = config.deviceName.isEmpty() ? config.deviceAddress
+                                                 : QStringLiteral("%1 (%2)").arg(config.deviceName, config.deviceAddress);
+        break;
+#else
+        _setBluetoothError(tr("This build has no Bluetooth support"));
+        qCWarning(RTCMStreamManagerLog) << "Bluetooth RTCM source requested but Bluetooth is not built in";
+        return;
+#endif
+    }
     case SourceNone:
     case SourceSerial:
     default:
@@ -127,12 +174,17 @@ void RTCMStreamManager::startStream()
         return;
     }
 
-    // Worker runs on its own thread (mirrors GPSRtk / TCPLink).
-    _workerThread = new QThread(this);
-    _workerThread->setObjectName(QStringLiteral("RTCM_%1").arg(sourceLabel));
-    _worker->moveToThread(_workerThread);
-    (void) connect(_workerThread, &QThread::started, _worker, &RTCMNetworkSource::start);
-    (void) connect(_workerThread, &QThread::finished, _worker, &QObject::deleteLater);
+    // Network sources run on their own thread (mirrors GPSRtk / TCPLink). Bluetooth stays on the
+    // main thread: the Qt Windows backend only initialises COM for the main thread ("Main thread
+    // COM init tried from another thread"), and an RFCOMM correction stream is a few KB/s anyway.
+    const bool useWorkerThread = (sourceType != SourceBluetooth);
+    if (useWorkerThread) {
+        _workerThread = new QThread(this);
+        _workerThread->setObjectName(QStringLiteral("RTCM_%1").arg(sourceLabel));
+        _worker->moveToThread(_workerThread);
+        (void) connect(_workerThread, &QThread::started, _worker, &RTCMNetworkSource::start);
+        (void) connect(_workerThread, &QThread::finished, _worker, &QObject::deleteLater);
+    }
 
     // RTCMMavlink lives on the main thread; the cross-thread signal marshals a copy.
     _rtcmMavlink = new RTCMMavlink(this);
@@ -159,7 +211,12 @@ void RTCMStreamManager::startStream()
     _factGroup->bytesPerSecond()->setRawValue(0);
     _factGroup->connected()->setRawValue(false);
 
-    _workerThread->start();
+    if (_workerThread) {
+        _workerThread->start();
+    } else {
+        // Queued so the source never reports connect/error back into the middle of startStream().
+        (void) QMetaObject::invokeMethod(_worker, "start", Qt::QueuedConnection);
+    }
 
     if ((sourceType == SourceNtrip) && rtkSettings->ntripSendGGA()->rawValue().toBool()) {
         _ggaTimer.start();
@@ -186,6 +243,11 @@ void RTCMStreamManager::stopStream()
         _worker = nullptr;
         _workerThread->deleteLater();
         _workerThread = nullptr;
+    } else if (_worker) {
+        // Main thread source (Bluetooth): no thread to unwind.
+        _worker->stop();
+        _worker->deleteLater();
+        _worker = nullptr;
     }
 
     if (_rtcmMavlink) {
@@ -224,6 +286,12 @@ void RTCMStreamManager::_onSourceError(const QString &errorString)
     qCWarning(RTCMStreamManagerLog) << "Source error:" << errorString;
     if (_factGroup) {
         _factGroup->connected()->setRawValue(false);
+    }
+
+    // The Bluetooth page has a dedicated error line - the other sources have none yet.
+    const int sourceType = SettingsManager::instance()->rtkSettings()->rtcmSourceType()->rawValue().toInt();
+    if (sourceType == SourceBluetooth) {
+        _setBluetoothError(errorString);
     }
 }
 
@@ -288,6 +356,132 @@ void RTCMStreamManager::fetchMountpoints()
         _sourceTable = nullptr;
     });
     _sourceTable->start();
+}
+
+void RTCMStreamManager::_refreshBluetoothAvailable()
+{
+#ifdef QGC_ENABLE_BLUETOOTH
+    // Qt answers this from QBluetoothLocalDevice, which on Android returns an empty adapter list
+    // until BLUETOOTH_CONNECT has been granted - so only call this once permission is in hand.
+    const bool available = QGCDeviceInfo::isBluetoothAvailable();
+    if (available != _bluetoothAvailable) {
+        _bluetoothAvailable = available;
+        emit bluetoothAvailableChanged();
+    }
+#endif
+}
+
+void RTCMStreamManager::_setBluetoothError(const QString &errorString)
+{
+    if (_bluetoothError == errorString) {
+        return;
+    }
+    _bluetoothError = errorString;
+    emit bluetoothErrorChanged();
+}
+
+bool RTCMStreamManager::_withBluetoothPermission(const std::function<void()> &action)
+{
+    QBluetoothPermission permission;
+    permission.setCommunicationModes(QBluetoothPermission::Access);
+
+    const Qt::PermissionStatus status = QCoreApplication::instance()->checkPermission(permission);
+    if (status == Qt::PermissionStatus::Granted) {
+        return true;
+    }
+
+    if (status == Qt::PermissionStatus::Denied) {
+        qCWarning(RTCMStreamManagerLog) << "Bluetooth permission denied";
+        _setBluetoothError(tr("Bluetooth permission denied"));
+        return false;
+    }
+
+    QCoreApplication::instance()->requestPermission(permission, this, [this, action](const QPermission &result) {
+        if (result.status() == Qt::PermissionStatus::Granted) {
+            action();
+        } else {
+            qCWarning(RTCMStreamManagerLog) << "Bluetooth permission denied";
+            _setBluetoothError(tr("Bluetooth permission denied"));
+        }
+    });
+
+    return false;
+}
+
+void RTCMStreamManager::scanBluetoothDevices()
+{
+#ifdef QGC_ENABLE_BLUETOOTH
+    if (!_withBluetoothPermission([this]() { scanBluetoothDevices(); })) {
+        return;
+    }
+
+    // Permission is granted at this point, so the adapter query is finally meaningful.
+    _refreshBluetoothAvailable();
+    if (!_bluetoothAvailable) {
+        _setBluetoothError(tr("No Bluetooth adapter available"));
+        return;
+    }
+
+    if (!_bluetoothScanner) {
+        _bluetoothScanner = new BluetoothRtcmScanner(this);
+        (void) connect(_bluetoothScanner, &BluetoothRtcmScanner::devicesChanged, this, [this]() {
+            _bluetoothDevices = _bluetoothScanner->deviceLabels();
+            emit bluetoothDevicesChanged();
+        });
+        (void) connect(_bluetoothScanner, &BluetoothRtcmScanner::scanningChanged, this, [this]() {
+            const bool scanning = _bluetoothScanner->scanning();
+            if (scanning != _scanningBluetooth) {
+                _scanningBluetooth = scanning;
+                emit scanningBluetoothChanged();
+            }
+        });
+        (void) connect(_bluetoothScanner, &BluetoothRtcmScanner::errorOccurred, this, [this](const QString &error) {
+            _setBluetoothError(error);
+        });
+    }
+
+    if (_bluetoothScanner->scanning()) {
+        return;
+    }
+
+    _setBluetoothError(QString());
+    _bluetoothScanner->start();
+    if (!_scanningBluetooth) {
+        _scanningBluetooth = _bluetoothScanner->scanning();
+        emit scanningBluetoothChanged();
+    }
+#else
+    _setBluetoothError(tr("This build has no Bluetooth support"));
+#endif
+}
+
+void RTCMStreamManager::stopBluetoothScan()
+{
+#ifdef QGC_ENABLE_BLUETOOTH
+    if (_bluetoothScanner) {
+        _bluetoothScanner->stop();
+    }
+#endif
+}
+
+void RTCMStreamManager::selectBluetoothDevice(int index)
+{
+#ifdef QGC_ENABLE_BLUETOOTH
+    if (!_bluetoothScanner) {
+        return;
+    }
+
+    const QString address = _bluetoothScanner->addressAt(index);
+    if (address.isEmpty()) {
+        return;
+    }
+
+    RTKSettings *const rtkSettings = SettingsManager::instance()->rtkSettings();
+    rtkSettings->bluetoothDeviceName()->setRawValue(_bluetoothScanner->nameAt(index));
+    rtkSettings->bluetoothDeviceAddress()->setRawValue(address);
+#else
+    Q_UNUSED(index);
+#endif
 }
 
 void RTCMStreamManager::_onBasePositionUpdate(double latitude, double longitude, double altitude, int stationId)

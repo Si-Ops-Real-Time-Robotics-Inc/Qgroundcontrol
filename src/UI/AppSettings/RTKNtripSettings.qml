@@ -23,13 +23,15 @@ SettingsPage {
     property var    rtcmStatus:         QGroundControl.rtcmStreamManager.rtcmFactGroup
     property int    rtcmSourceType:     rtkSettings.rtcmSourceType.rawValue
 
-    readonly property int rtcmSourceNone:   0
-    readonly property int rtcmSourceSerial: 1
-    readonly property int rtcmSourceNtrip:  2
-    readonly property int rtcmSourceTcp:    3
-    readonly property int rtcmSourceUdp:    4
+    readonly property int rtcmSourceNone:      0
+    readonly property int rtcmSourceSerial:    1
+    readonly property int rtcmSourceNtrip:     2
+    readonly property int rtcmSourceTcp:       3
+    readonly property int rtcmSourceUdp:       4
+    readonly property int rtcmSourceBluetooth: 5
 
-    readonly property bool _isNetworkSource: rtcmSourceType === rtcmSourceNtrip || rtcmSourceType === rtcmSourceTcp || rtcmSourceType === rtcmSourceUdp
+    readonly property bool _isNetworkSource: rtcmSourceType === rtcmSourceNtrip || rtcmSourceType === rtcmSourceTcp ||
+                                             rtcmSourceType === rtcmSourceUdp || rtcmSourceType === rtcmSourceBluetooth
 
     SettingsGroupLayout {
         heading:            qsTr("Network RTCM Source")
@@ -133,6 +135,48 @@ SettingsPage {
             label:              qsTr("Listen Port")
             fact:               rtkSettings.udpPort
             visible:            rtcmSourceType === rtcmSourceUdp
+        }
+
+        // Bluetooth (RFCOMM / Serial Port Profile)
+        QGCLabel {
+            Layout.fillWidth:   true
+            wrapMode:           Text.WordWrap
+            font.pointSize:     ScreenTools.smallFontPointSize
+            text:               qsTr("Pair the RTK receiver / base radio with this device in the operating system first, then scan and select it here.")
+            visible:            rtcmSourceType === rtcmSourceBluetooth
+        }
+        LabelledLabel {
+            label:              qsTr("Device")
+            labelText:          rtkSettings.bluetoothDeviceName.rawValue !== ""
+                                    ? rtkSettings.bluetoothDeviceName.rawValue + " (" + rtkSettings.bluetoothDeviceAddress.rawValue + ")"
+                                    : (rtkSettings.bluetoothDeviceAddress.rawValue !== "" ? rtkSettings.bluetoothDeviceAddress.rawValue : qsTr("None selected"))
+            visible:            rtcmSourceType === rtcmSourceBluetooth
+        }
+        RowLayout {
+            Layout.fillWidth:   true
+            spacing:            ScreenTools.defaultFontPixelWidth
+            visible:            rtcmSourceType === rtcmSourceBluetooth
+
+            QGCButton {
+                // Never gated on bluetoothAvailable: on Android the adapter cannot be seen until the
+                // user grants Bluetooth access, which this button is what triggers.
+                text:       rtcmStreamManager.scanningBluetooth ? qsTr("Scanning…") : qsTr("Scan Devices")
+                enabled:    !rtcmStreamManager.scanningBluetooth
+                onClicked:  rtcmStreamManager.scanBluetoothDevices()
+            }
+            QGCComboBox {
+                Layout.fillWidth:   true
+                visible:            rtcmStreamManager.bluetoothDevices.length > 0
+                model:              rtcmStreamManager.bluetoothDevices
+                onActivated:        (index) => { rtcmStreamManager.selectBluetoothDevice(index) }
+            }
+        }
+        QGCLabel {
+            Layout.fillWidth:   true
+            wrapMode:           Text.WordWrap
+            color:              QGroundControl.globalPalette.warningText
+            text:               rtcmStreamManager.bluetoothError
+            visible:            rtcmSourceType === rtcmSourceBluetooth && rtcmStreamManager.bluetoothError !== ""
         }
 
         FactCheckBoxSlider {

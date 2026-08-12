@@ -1,7 +1,7 @@
 # NTRIP / RTCM Correction Injection — Developer Guide
 
-This document describes the **network RTCM correction** feature (NTRIP / TCP / UDP → drone) added to
-this QGroundControl build, written so it can be **re-implemented on another platform / GCS**.
+This document describes the **RTCM correction injection** feature (NTRIP / TCP / UDP / Bluetooth → drone)
+added to this QGroundControl build, written so it can be **re-implemented on another platform / GCS**.
 
 - **Part 1** is the behaviour + protocol specification. It is the part that matters for porting: it is
   pure network + NMEA + RTCM3 + MAVLink and has nothing to do with QGroundControl.
@@ -9,16 +9,20 @@ this QGroundControl build, written so it can be **re-implemented on another plat
 - **Part 3** onwards is the QGroundControl implementation map, useful only if you work in this codebase
   or one shaped like it.
 
-The whole feature is one idea: **get raw RTCM3 bytes from a network source, forward them to the vehicle
+The whole feature is one idea: **get raw RTCM3 bytes from some source, forward them to the vehicle
 as MAVLink `GPS_RTCM_DATA`, and (optionally) send the rover position back up to the caster as NMEA GGA.**
 
 ```
- NTRIP caster / TCP / UDP ──raw RTCM3──► [source] ──► [RTCM→MAVLink] ──GPS_RTCM_DATA──► vehicle(s)
+ NTRIP caster / TCP / UDP ──raw RTCM3──┐
+ Bluetooth SPP receiver ──raw RTCM3────┴─► [source] ──► [RTCM→MAVLink] ──GPS_RTCM_DATA──► vehicle(s)
                                               │
                                               ├──► [RTCM 1005/1006 parser] ──► base station lat/lon/alt (map marker)
                                               └──► [file logger] ──► *.rtcm3
  vehicle position ──► [GGA builder, every ~10 s] ──NMEA GGA──► NTRIP caster   (VRS / network RTK only)
 ```
+
+Every source is interchangeable below the `[source]` box: pick a transport, and the rest of the chain
+(§1.1 forwarding, §1.6 base decode, §1.7 logging) is identical.
 
 ---
 
@@ -192,19 +196,142 @@ Write the raw RTCM3 byte stream to a file **verbatim** (no framing) so it can be
 tool. **Flush after every write** so a crash loses at most the last chunk. Auto-name by timestamp
 (`rtcm_YYYY-MM-DD_hh-mm-ss.rtcm3`) in the app's user-visible save folder.
 
+### 1.8 Bluetooth source (classic RFCOMM / Serial Port Profile)
+
+For an RTK receiver or a base-station radio that exposes a **Bluetooth serial bridge**. This is the
+tablet-in-the-field case: no network, no cable — the receiver sits on the tripod and the GCS pulls its
+RTCM over Bluetooth.
+
+Once the RFCOMM stream is open it is **exactly the raw-TCP case (§1.5)**: every received byte is RTCM3,
+feed it straight into §1.1. Everything specific to Bluetooth is in getting the stream open.
+
+**Prerequisite:** the device must already be **paired at the operating-system level**. Do not implement
+pairing/PIN entry in the GCS — pairing is an OS dialog on every platform, and a socket to an unpaired
+device fails with a permission/authentication error.
+
+**Discovery (device picker):** run a device inquiry and list `name` + `address` (`AA:BB:CC:DD:EE:FF`).
+Store both: the address is what you connect to, the name is what the user recognises. Persist the
+address in settings — the user should not rescan on every app start. On iOS there is no visible BD
+address; store the platform device UUID instead and match on that.
+
+**Connecting — the part that bites.** The SPP service UUID is
+`00001101-0000-1000-8000-00805F9B34FB`. Two rules learned from a real receiver (GNSS-5804510):
+
+1. **A receiver commonly publishes more than one SPP record** — e.g. `COM0` on RFCOMM channel 1 and
+   `COM1` on channel 2, often carrying different data (corrections on one, NMEA/config on the other).
+   So do a **service discovery restricted to that device + the SPP UUID, collect every record, and then
+   connect once to a deterministic one — the lowest RFCOMM channel.** Connecting to "whichever record
+   the discovery callback delivered first" is a trap: the order varies between runs, so the user
+   silently gets the wrong port some of the time.
+2. **Do not let the socket API run its own discovery** if it has a "connect to address + UUID" helper
+   that does so internally. In Qt 6.8 that helper (`QBluetoothSocket::connectToService(address, uuid)`)
+   crashes on exactly the multi-record devices above: its `serviceDiscovered()` slot connects, then sets
+   its internal discovery-agent pointer to null **without disconnecting the agent**, so the second
+   record re-enters the slot and dereferences the null pointer (access violation inside QtCore, 100%
+   reproducible). Driving the discovery yourself avoids the whole class of problem and gives you rule 1
+   for free.
+
+**Platform notes:**
+
+| Platform | Note |
+|----------|------|
+| Windows | The Bluetooth stack initialises COM **on the main thread only**. Run the socket on the main thread (a correction stream is a few KB/s — it does not need a worker thread), or the backend operates without a valid COM apartment and crashes. |
+| Android | Connecting directly to address + SPP UUID is native and safe (no service discovery involved). Needs the **runtime** permissions `BLUETOOTH_SCAN` + `BLUETOOTH_CONNECT` (API 31+) / `ACCESS_FINE_LOCATION` (API ≤ 30) — request them before scanning **and** before connecting, and retry the action from the permission callback. **Do not probe for a local adapter before that grant:** the platform reports *no adapter at all* to an app without `BLUETOOTH_CONNECT` (Qt logs `Local device allDevices() failed due to missing permissions` and returns an empty list), so an "is Bluetooth available?" check at page load always answers *no* on a fresh install. See the availability rule in §4.7. |
+| iOS | Classic RFCOMM is restricted to MFi-programme accessories; treat as best-effort. Match the device by its UUID during service discovery since no BD address is exposed. |
+
+**No GGA upstream:** §1.3 does not apply — a Bluetooth receiver is a local base, not a caster.
+
+**Reconnection:** none is implemented; a dropped link stops the stream and the user reconnects. If you
+add auto-retry, back off (the OS stack rejects rapid reconnect attempts).
+
+#### 1.8.1 Connection sequence
+
+Two user actions, two flows. Both start with the same permission gate, which on Android is
+**asynchronous** — treat "permission not yet granted" as *defer*, not *fail*, or the first tap of every
+button after a fresh install does nothing.
+
+```
+ensure_permission(action):                       # returns immediately if already granted
+    status = check_bluetooth_permission()
+    if status == GRANTED:   return true
+    if status == DENIED:    show_error("Bluetooth permission denied"); return false
+    request_bluetooth_permission(callback: granted ->
+        if granted: action()                     # re-run the whole action, do not resume mid-way
+        else:       show_error("Bluetooth permission denied"))
+    return false                                 # caller stops here; the callback restarts it
+
+# ── Flow A: "Scan Devices" ─────────────────────────────────────────────
+on_scan_clicked():
+    if not ensure_permission(on_scan_clicked): return
+    clear device list; clear error
+    device_inquiry.start()                       # results stream in one by one
+on_device_found(info):
+    if info.name empty or address already listed: return
+    append {name, address} → UI list updates live (do not wait for "finished")
+
+# ── Flow B: "Connect" ──────────────────────────────────────────────────
+on_connect_clicked():
+    if source_type != BLUETOOTH: ...             # other sources, see §1.2/§1.5
+    if config.address empty: show_error("Select a Bluetooth device first"); return
+    if not ensure_permission(on_connect_clicked): return
+    stop_device_inquiry()                        # an active inquiry starves RFCOMM (esp. Android)
+    open_socket()                                # see below; report state via the UI status block
+
+open_socket():                                   # ── desktop (own discovery, §1.8 rule 2)
+    socket = new_rfcomm_socket()
+    agent  = new_service_discovery_agent()
+    agent.remote_address = config.address        # iOS: no address → match device UUID in the callback
+    agent.uuid_filter    = SPP_UUID
+    best = null
+    agent.on_service_found(rec):
+        if rec.rfcomm_channel <= 0: return
+        if best == null or rec.rfcomm_channel < best.rfcomm_channel: best = rec
+    agent.on_finished():
+        if best == null: error("no serial port service found on <name>"); return
+        agent.disconnect_signals(); agent.stop()  # nothing may arrive after this point
+        socket.connect_to_service(best)           # exactly one connect call, ever
+    agent.start(FULL_DISCOVERY)
+
+open_socket():                                   # ── Android (no discovery needed)
+    socket = new_rfcomm_socket()
+    socket.connect_to_service(config.address, SPP_UUID)
+
+on_socket_connected():   status = CONNECTED; start byte-rate timer
+on_socket_data(bytes):   total += len(bytes); forward to §1.1 + §1.6 tap + §1.7 logger
+on_socket_error(err):    if err == OPERATION_ERROR and socket.state != UNCONNECTED: ignore   # stray 2nd connect
+                         else: status = ERROR; show_error(err)
+on_disconnect_clicked(): stop inquiry; socket.abort(); destroy socket + agent; status = IDLE
+```
+
+Timings measured on Windows with a paired receiver: service discovery ≈ 0.9 s, RFCOMM connect ≈ 0.4 s,
+first RTCM within ~1 s of connect, first 1005/1006 base fix within ~3 s (base messages are ~1 Hz or
+slower). Budget ~2 s from tap to "Connected"; anything beyond ~10 s means the receiver is off or out of
+range — show that instead of spinning forever.
+
+**API mapping** for the four primitives, if you are porting off Qt:
+
+| Primitive | Qt 6 | Android (Java) | Windows (WinRT) |
+|-----------|------|----------------|-----------------|
+| Device inquiry | `QBluetoothDeviceDiscoveryAgent` | `BluetoothAdapter.startDiscovery()` + `ACTION_FOUND` receiver, or `getBondedDevices()` for paired-only | `DeviceInformation.FindAllAsync(BluetoothDevice.GetDeviceSelector())` |
+| Service discovery | `QBluetoothServiceDiscoveryAgent` (`setRemoteAddress` + `setUuidFilter`) | not needed | `BluetoothDevice.GetRfcommServicesForIdAsync(RfcommServiceId.SerialPort)` |
+| Open stream | `QBluetoothSocket::connectToService(serviceInfo)` | `BluetoothDevice.createRfcommSocketToServiceRecord(SPP_UUID).connect()` | `StreamSocket.ConnectAsync(service.ConnectionHostName, service.ConnectionServiceName)` |
+| Read | `readyRead` → `readAll()` | `socket.getInputStream().read(buf)` on a thread | `DataReader.LoadAsync` loop |
+
 ---
 
 ## 2. Configuration fields
 
 | Field | Type | Notes |
 |-------|------|-------|
-| source type | enum | None / Serial / **NTRIP / TCP / UDP** |
+| source type | enum | None / Serial / **NTRIP / TCP / UDP / Bluetooth** (0…5) |
 | ntrip host / port | string / uint16 | caster address (default port 2101) |
 | ntrip mountpoint | string | stream name |
 | ntrip username / password | string | Basic auth; password field masked in UI |
 | ntrip send GGA | bool | enable VRS position upload |
 | tcp host / port | string / uint16 | raw RTCM3 TCP source |
 | udp port | uint16 | local listen port |
+| bluetooth device name | string | display name of the paired device (§1.8) |
+| bluetooth device address | string | `AA:BB:CC:DD:EE:FF` — what the socket connects to (device UUID on iOS) |
 | log to file | bool | toggle (can be toggled live while streaming) |
 
 Status exposed to UI: connected, source label, stream label, bytes/sec, base lat/lon/alt + station id,
@@ -214,14 +341,16 @@ log file name + bytes written.
 
 ## 3. QGroundControl implementation map
 
-New module: **`src/RTK/`** (compiled unconditionally; links Qt Network + Positioning).
+New module: **`src/RTK/`** (compiled unconditionally; links Qt Network + Positioning, plus Qt Bluetooth
+when `QGC_ENABLE_BLUETOOTH` is on — that flag is defined on the project target by `src/Comms/CMakeLists.txt`).
 
 | File | Role |
 |------|------|
-| `RTCMStreamManager.{h,cc}` | app singleton; owns the worker thread + `RTCMMavlink` + base parser + file logger + GGA timer; `Q_INVOKABLE startStream()/stopStream()/fetchMountpoints()` |
+| `RTCMStreamManager.{h,cc}` | app singleton; owns the worker thread + `RTCMMavlink` + base parser + file logger + GGA timer; `Q_INVOKABLE startStream()/stopStream()/fetchMountpoints()/scanBluetoothDevices()/selectBluetoothDevice()` |
 | `RTCMNetworkSource.h` | abstract worker interface: `signals rtcmData / connectedChanged / errorOccurred / bytesReceived` |
 | `NtripClient.{h,cc}` | §1.2 handshake + §1.3 GGA; `useNtripHandshake=false` makes it the §1.5 raw-TCP source |
 | `UdpRtcmReceiver.{h,cc}` | §1.5 UDP source |
+| `BluetoothRtcmSource.{h,cc}` | §1.8 source + `BluetoothRtcmScanner` device picker (built only with `QGC_ENABLE_BLUETOOTH`) |
 | `NtripSourceTable.{h,cc}` | §1.4 source-table fetch/parse |
 | `RtcmBaseParser.{h,cc}` | §1.6 RTCM 1005/1006 decode (CRC-24Q, ECEF→WGS84) |
 | `RTCMFileLogger.{h,cc}` | §1.7 logging |
@@ -239,14 +368,26 @@ that dir's `CMakeLists.txt` + `SettingsPagesModel.qml`. Read-only status also sh
 toolbar popup `src/QmlControls/GPSIndicatorPage.qml`. Base marker "RTK Base" in
 `src/FlightDisplay/FlyViewMap.qml`.
 
-Threading model (mirror `GPSRtk`): the network source runs on its own worker `QThread`; its `rtcmData`
-signal is delivered to `RTCMMavlink` (on the main thread) via a **queued connection** (a value copy of
-the `QByteArray` crosses the thread boundary). The GGA timer lives on the main thread and posts the
-sentence to the worker.
+Threading model (mirror `GPSRtk`): each **network** source runs on its own worker `QThread`; its
+`rtcmData` signal is delivered to `RTCMMavlink` (on the main thread) via a **queued connection** (a value
+copy of the `QByteArray` crosses the thread boundary). The GGA timer lives on the main thread and posts
+the sentence to the worker. The **Bluetooth** source is the exception: it stays on the main thread for
+the COM reason in §1.8, so `RTCMStreamManager` creates no `QThread` for it (`active()` therefore tests
+`_worker`, not `_workerThread`) and starts it with a queued `invokeMethod` so it cannot report back into
+the middle of `startStream()`.
+
+Android permissions need no manifest edit: `androiddeployqt` merges `BLUETOOTH_SCAN` /
+`BLUETOOTH_CONNECT` / `ACCESS_FINE_LOCATION` from Qt Bluetooth's `-android-dependencies.xml`. The
+runtime request is `RTCMStreamManager::_withBluetoothPermission()`, which re-runs the pending action
+(scan or connect) from the grant callback.
 
 ---
 
-## 4. Recommended UI — values to display for an NTRIP connection
+## 4. UI — what to display, and what is already built
+
+§4.0–4.6 are about the **status panel** (what an RTCM/NTRIP connection should surface and where each
+value comes from). §4.7 documents the **Bluetooth controls** as shipped, and §4.8 is the hands-on
+"try it yourself" walkthrough.
 
 What a good NTRIP/RTCM status panel should surface, grouped by purpose. The **Source** column says where
 each value comes from so it can be reproduced on any platform (§ refers to Part 1).
@@ -270,7 +411,20 @@ read-only copy in the GPS/RTK toolbar popup). Verified end-to-end against the **
 
 This confirms the full chain works: NTRIP v2 connect → RTCM forwarded as `GPS_RTCM_DATA` → 1005/1006
 base decode → GGA/VRS upload (the `VRS.*` mountpoint only yields a base near the rover if GGA is being
-sent) → file logging. The values below (§4.1–4.6) are the **recommended additions** on top of this
+sent) → file logging.
+
+The same panel, validated on the **Bluetooth** source against a paired receiver (Windows, 2026-08-12):
+
+| Field | Live example | Source |
+|-------|--------------|--------|
+| Source | `Bluetooth` | config source type |
+| Stream | `GNSS-5804510 (81:8D:10:0B:1C:08)` | configured device name + address (§1.8) |
+| Status | `Connected` | RFCOMM socket state — ~1.3 s from Connect to Connected, of which ~0.9 s is service discovery |
+| Data Rate | `4913.17 B/s` | bytes/interval (§1.1 input) |
+| Base Station / Altitude | `10.8418817, 106.7750761` / `22.86 m` | RTCM **1006**, station id 478 (§1.6) |
+
+That receiver publishes two SPP records (`COM0` ch 1, `COM1` ch 2), which is what motivated the
+lowest-channel rule in §1.8. The values below (§4.1–4.6) are the **recommended additions** on top of this
 baseline.
 
 ### 4.1 Connection
@@ -317,15 +471,107 @@ baseline.
 warning (4.3), vehicle RTK fix type (4.6), baseline distance (4.4). These answer the two questions a user
 actually has: *"why didn't it connect?"* and *"is it working / did the drone reach RTK Fixed?"*
 
+### 4.7 Bluetooth source UI (as implemented)
+
+The Bluetooth source adds three rows to the same settings page; everything else (log toggle, Connect
+button, Status block) is shared with the network sources. Layout as shipped:
+
+```
+┌ Network RTCM Source ─────────────────────────────────────────────────────┐
+│ Correction Source                                        [ Bluetooth ▾ ] │   ← enum, 6 entries
+│ The correction stream runs independently of the vehicle connection …     │   ← shared hint
+│ Pair the RTK receiver / base radio with this device in the operating     │   ← Bluetooth-only hint
+│ system first, then scan and select it here.                              │
+│ Device                            GNSS-5804510 (81:8D:10:0B:1C:08)       │   ← or "None selected"
+│ [ Scan Devices ]   [ GNSS-5804510 (81:8D:10:0B:1C:08)              ▾ ]   │   ← combo hidden until results
+│ Log RTCM to file                                              (  ○)      │   ← shared, live-togglable
+│ Connection                                          [   Connect    ]     │   ← shared, toggles label
+└──────────────────────────────────────────────────────────────────────────┘
+┌ Status ────────────────────────────── (visible only while streaming) ────┐
+│ Source        Bluetooth        Data Rate    4913.17 B/s                  │
+│ Stream        GNSS-5804510 …   Base Station 10.8418817, 106.7750761      │
+│ Status        Connected        Base Altitude 22.86 m                     │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+Control behaviour — the rules that make it usable:
+
+| Control | Rule |
+|---------|------|
+| Bluetooth rows | visible only when source type == Bluetooth; the shared rows stay visible for every non-serial source |
+| `Device` row | shows `name (address)` from **settings**, not from the scan list — so the choice survives an app restart. Falls back to the bare address, then to "None selected" |
+| `Scan Devices` | label becomes `Scanning…` and the button disables while an inquiry runs — and **only** then. Never gate it on an "adapter available" check: on Android that check cannot succeed until Bluetooth access is granted, and this button is what asks for it, so gating it deadlocks the flow (button greyed out + "No Bluetooth adapter available" forever on a fresh install) |
+| adapter availability | treat it as **optimistic until proven otherwise**: assume present, probe the adapter only *after* the permission grant inside the scan/connect flow, and expose it as a notifying property, not a constant — a value read once at page load is read too early on Android. Desktop may probe at startup (no permission needed there) |
+| results combo | hidden while the list is empty (a permanently empty dropdown reads as "broken"); appears and grows **during** the scan; selecting an entry writes name+address into settings immediately |
+| error line | one warning-coloured line under the rows: `No Bluetooth adapter available` when there is no adapter, otherwise the last Bluetooth error (permission denied, no SPP service, socket error). **Cleared on a new scan/connect** so a stale error never sits under a working connection |
+| `Connect` | shared with the other sources; label flips to `Disconnect` while a stream is active. Pressing it with no device selected sets the error line rather than silently doing nothing |
+| Status block | appears only while streaming; `Status` reads `Connecting…` until the socket reports connected |
+
+Backend surface the UI binds to (`QGroundControl.rtcmStreamManager`) — replicate these names or map them
+to your own view-model:
+
+| Member | Type | Purpose |
+|--------|------|---------|
+| `scanBluetoothDevices()` | invokable | permission gate + start inquiry (§1.8.1 flow A) |
+| `stopBluetoothScan()` | invokable | cancel inquiry (also called automatically before connecting) |
+| `selectBluetoothDevice(index)` | invokable | write the chosen entry's name+address into settings |
+| `bluetoothDevices` | `string[]` | live list of `name (address)` labels, notified per discovery |
+| `scanningBluetooth` | `bool` | drives the button label/enabled state |
+| `bluetoothAvailable` | `bool` (**notifying**) | is there a local adapter — optimistic until the post-permission probe corrects it |
+| `bluetoothError` | `string` | last error, empty when fine |
+| `active`, `startStream()`, `stopStream()` | — | shared with every source |
+| `rtcmFactGroup` | fact group | shared status values (connected, sourceType, mountpoint/stream, bytesPerSecond, base*, log*) |
+
+Settings keys are `rtcmSourceType = 5`, `bluetoothDeviceName`, `bluetoothDeviceAddress` (Part 2).
+
+### 4.8 Trying it as a developer
+
+1. Pair the receiver in the OS Bluetooth panel first (Windows Settings → Bluetooth, or Android
+   Settings → Bluetooth). The GCS never pairs.
+2. Run the app with the module's logging on — this is the fastest way to see where a connect stalls:
+   `QT_LOGGING_RULES="qgc.rtk.*=true"` (Windows also needs `QT_FORCE_STDERR_LOGGING=1` and
+   `QT_ASSUME_STDERR_HAS_CONSOLE=1` to get output out of a GUI build; Android: `adb logcat | grep qgc.rtk`).
+   Add `qt.bluetooth*=true` when the failure looks like it is inside the stack rather than the app.
+3. Application Settings → **RTK / NTRIP** → Correction Source = **Bluetooth** → *Scan Devices* → pick the
+   receiver → **Connect**.
+4. A healthy connect looks exactly like this (real log, Windows):
+
+```
+Started RTCM stream: "Bluetooth" "GNSS-5804510 (81:8D:10:0B:1C:08)"
+Connecting to "GNSS-5804510" "81:8D:10:0B:1C:08"
+Found service "COM0" channel 1
+Found service "COM1" channel 2
+Connecting to service "COM0" channel 1        ← one connect, lowest channel (§1.8 rule 1)
+Connected to "GNSS-5804510"
+Source connected: true
+Base station 1006 id 478 lat 10.8419 lon 106.775 alt 22.8649
+```
+
+5. No vehicle is needed to test the source: `Data Rate` > 0 proves bytes are flowing and the base fields
+   prove they are valid RTCM. Tick *Log RTCM to file* and open the `.rtcm3` with any RTCM parser to check
+   the message-type mix (§4.3). Connect a vehicle only for the last hop (§4.6, fix type → RTK Fixed).
+6. Symptom table:
+
+| Symptom | Cause |
+|---------|-------|
+| `No Bluetooth adapter available` on Android with Bluetooth clearly on | the adapter was probed before `BLUETOOTH_CONNECT` was granted (§1.8 Android note) — probe after the grant, not at page load |
+| Scan finds nothing | device off / not discoverable; on Android also the `neverForLocation` scan-flag caveat and, on API ≤ 30, location services switched off |
+| `no serial port service found` | the device is paired but exposes no SPP record — it is a BLE-only device, or pairing was lost |
+| Connect hangs, no error | receiver out of range / already connected to another host (RFCOMM is single-client) |
+| Connected but `Data Rate` stays 0 | connected to the wrong serial port of a multi-port receiver, or the receiver is not configured to output RTCM3 on it |
+| `Data Rate` fine, base fields empty | stream has observations but no 1005/1006 — normal for some setups, but then the map marker cannot be drawn |
+
 ---
 
 ## 5. Porting checklist (to another GCS / app)
 
 1. **Transport:** a raw TCP client (NTRIP + raw-TCP) and a UDP listener. Not a high-level HTTP client.
+   Add an RFCOMM/SPP client (§1.8) if you want the cable-free local-base case.
 2. **NTRIP handshake + response parser** per §1.2 (handle ICY/non-HTTP 200, bare `\n`, SOURCETABLE).
 3. **RTCM → `GPS_RTCM_DATA`** per §1.1 — the only firmware-facing piece; get the flags bitfield and the
    180-byte fragmentation right.
 4. **GGA upload** per §1.3 if you need VRS, including the last-position cache on link loss.
-5. Optional: source-table fetch (§1.4), base-position decode (§1.6), file logging (§1.7).
-6. Everything except §1.1 is ordinary networking; §1.1 is the piece that must match the MAVLink spec
+5. Optional: source-table fetch (§1.4), base-position decode (§1.6), file logging (§1.7),
+   Bluetooth device picker + deterministic SPP record choice (§1.8).
+6. Everything except §1.1 is ordinary transport code; §1.1 is the piece that must match the MAVLink spec
    exactly.

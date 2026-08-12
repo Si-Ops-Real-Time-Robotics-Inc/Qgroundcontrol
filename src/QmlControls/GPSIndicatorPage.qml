@@ -32,11 +32,12 @@ ToolIndicatorPage {
     property var    rtcmStatus:         QGroundControl.rtcmStreamManager.rtcmFactGroup
     property int    rtcmSourceType:     rtkSettings.rtcmSourceType.rawValue
 
-    readonly property int rtcmSourceNone:   0
-    readonly property int rtcmSourceSerial: 1
-    readonly property int rtcmSourceNtrip:  2
-    readonly property int rtcmSourceTcp:    3
-    readonly property int rtcmSourceUdp:    4
+    readonly property int rtcmSourceNone:      0
+    readonly property int rtcmSourceSerial:    1
+    readonly property int rtcmSourceNtrip:     2
+    readonly property int rtcmSourceTcp:       3
+    readonly property int rtcmSourceUdp:       4
+    readonly property int rtcmSourceBluetooth: 5
 
     contentComponent: Component {
         ColumnLayout {

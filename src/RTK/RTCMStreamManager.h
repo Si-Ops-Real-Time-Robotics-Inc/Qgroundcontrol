@@ -16,8 +16,11 @@
 #include <QtCore/QTimer>
 #include <QtPositioning/QGeoCoordinate>
 
+#include <functional>
+
 Q_DECLARE_LOGGING_CATEGORY(RTCMStreamManagerLog)
 
+class BluetoothRtcmScanner;
 class FactGroup;
 class NetworkRTCMFactGroup;
 class RTCMFileLogger;
@@ -40,6 +43,10 @@ class RTCMStreamManager : public QObject
     Q_PROPERTY(QStringList mountpoints READ mountpoints NOTIFY mountpointsChanged)
     Q_PROPERTY(bool fetchingMountpoints READ fetchingMountpoints NOTIFY fetchingMountpointsChanged)
     Q_PROPERTY(QString mountpointsError READ mountpointsError NOTIFY mountpointsErrorChanged)
+    Q_PROPERTY(bool bluetoothAvailable READ bluetoothAvailable NOTIFY bluetoothAvailableChanged)
+    Q_PROPERTY(QStringList bluetoothDevices READ bluetoothDevices NOTIFY bluetoothDevicesChanged)
+    Q_PROPERTY(bool scanningBluetooth READ scanningBluetooth NOTIFY scanningBluetoothChanged)
+    Q_PROPERTY(QString bluetoothError READ bluetoothError NOTIFY bluetoothErrorChanged)
 
 public:
     explicit RTCMStreamManager(QObject *parent = nullptr);
@@ -48,10 +55,14 @@ public:
     static RTCMStreamManager *instance();
 
     FactGroup *rtcmFactGroup();
-    bool active() const { return (_workerThread != nullptr); }
+    bool active() const { return (_worker != nullptr); }
     QStringList mountpoints() const { return _mountpoints; }
     bool fetchingMountpoints() const { return _fetchingMountpoints; }
     QString mountpointsError() const { return _mountpointsError; }
+    bool bluetoothAvailable() const { return _bluetoothAvailable; }
+    QStringList bluetoothDevices() const { return _bluetoothDevices; }
+    bool scanningBluetooth() const { return _scanningBluetooth; }
+    QString bluetoothError() const { return _bluetoothError; }
 
     /// Start streaming using the source configured in RTKSettings.
     Q_INVOKABLE void startStream();
@@ -59,12 +70,22 @@ public:
     Q_INVOKABLE void stopStream();
     /// Query the configured NTRIP caster's source table to populate mountpoints().
     Q_INVOKABLE void fetchMountpoints();
+    /// Discover nearby/paired Bluetooth devices to populate bluetoothDevices().
+    Q_INVOKABLE void scanBluetoothDevices();
+    /// Cancel an in-progress Bluetooth scan.
+    Q_INVOKABLE void stopBluetoothScan();
+    /// Store the device at the given bluetoothDevices() index as the RTCM source.
+    Q_INVOKABLE void selectBluetoothDevice(int index);
 
 signals:
     void activeChanged();
     void mountpointsChanged();
     void fetchingMountpointsChanged();
     void mountpointsErrorChanged();
+    void bluetoothDevicesChanged();
+    void scanningBluetoothChanged();
+    void bluetoothErrorChanged();
+    void bluetoothAvailableChanged();
 
 private slots:
     void _onSourceConnectedChanged(bool connected);
@@ -79,6 +100,13 @@ private slots:
 private:
     void _startFileLogging();
     void _stopFileLogging();
+    /// Runs action() once Bluetooth access is granted. Returns false if the permission is
+    /// still pending (action runs later) or was denied (action never runs).
+    bool _withBluetoothPermission(const std::function<void()> &action);
+    void _setBluetoothError(const QString &errorString);
+    /// Re-probe the local adapter. Only meaningful once Bluetooth access has been granted: on Android
+    /// the Qt adapter query returns "nothing" until then.
+    void _refreshBluetoothAvailable();
     static QByteArray _buildGGA(const QGeoCoordinate &coordinate);
 
     RTCMNetworkSource *_worker = nullptr;
@@ -92,6 +120,18 @@ private:
     QStringList _mountpoints;
     bool _fetchingMountpoints = false;
     QString _mountpointsError;
+
+    BluetoothRtcmScanner *_bluetoothScanner = nullptr;
+    QStringList _bluetoothDevices;
+    bool _scanningBluetooth = false;
+    QString _bluetoothError;
+#ifdef QGC_ENABLE_BLUETOOTH
+    /// Starts optimistic so the UI does not claim "no adapter" before the user has had a chance to
+    /// grant Bluetooth access (Android reports no adapter until then). Corrected by the scan/connect path.
+    bool _bluetoothAvailable = true;
+#else
+    bool _bluetoothAvailable = false;
+#endif
 
     QTimer _ggaTimer;
     QGeoCoordinate _lastGGACoordinate;  ///< last known drone position, kept so GGA keeps flowing if the vehicle drops
