@@ -28,19 +28,43 @@ RTCMMavlink::~RTCMMavlink()
     // qCDebug(RTCMMavlinkLog) << Q_FUNC_INFO << this;
 }
 
+namespace {
+
+constexpr qsizetype kMaxMessageLength = MAVLINK_MSG_GPS_RTCM_DATA_FIELD_DATA_LEN;
+/// The fragment id occupies 2 bits of the flags field, so a sequence holds at most 4 fragments.
+constexpr int kMaxFragments = 4;
+constexpr qsizetype kMaxSequenceLength = kMaxMessageLength * kMaxFragments;
+
+} // namespace
+
 void RTCMMavlink::RTCMDataUpdate(QByteArrayView data)
 {
+    if (data.isEmpty()) {
+        return;
+    }
+
 #ifdef QT_DEBUG
     _calculateBandwith(data.size());
 #endif
 
+    // Anything longer than a full sequence goes out as several sequences: overflowing the 2 bit
+    // fragment id would corrupt the sequence id sharing the same flags byte.
+    qsizetype start = 0;
+    while (start < data.size()) {
+        const qsizetype length = std::min(data.size() - start, kMaxSequenceLength);
+        _sendSequence(data.sliced(start, length));
+        start += length;
+    }
+}
+
+void RTCMMavlink::_sendSequence(QByteArrayView data)
+{
     mavlink_gps_rtcm_data_t gpsRtcmData{};
 
-    static constexpr qsizetype maxMessageLength = MAVLINK_MSG_GPS_RTCM_DATA_FIELD_DATA_LEN;
-    if (data.size() < maxMessageLength) {
+    if (data.size() < kMaxMessageLength) {
         gpsRtcmData.len = data.size();
         gpsRtcmData.flags = (_sequenceId & 0x1FU) << 3;
-        (void) memcpy(&gpsRtcmData.data, data.data(), data.size());
+        (void) memcpy(gpsRtcmData.data, data.constData(), data.size());
         _sendMessageToVehicle(gpsRtcmData);
     } else {
         uint8_t fragmentId = 0;
@@ -50,7 +74,7 @@ void RTCMMavlink::RTCMDataUpdate(QByteArrayView data)
             gpsRtcmData.flags |= fragmentId++ << 1; // Next 2 bits are fragment id
             gpsRtcmData.flags |= (_sequenceId & 0x1FU) << 3; // Next 5 bits are sequence id
 
-            const qsizetype length = std::min(data.size() - start, maxMessageLength);
+            const qsizetype length = std::min(data.size() - start, kMaxMessageLength);
             gpsRtcmData.len = length;
 
             (void) memcpy(gpsRtcmData.data, data.constData() + start, length);

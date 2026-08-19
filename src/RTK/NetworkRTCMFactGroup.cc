@@ -19,6 +19,8 @@ NetworkRTCMFactGroup::NetworkRTCMFactGroup(QObject *parent)
     _addFact(&_sourceTypeFact);
     _addFact(&_mountpointFact);
     _addFact(&_bytesPerSecondFact);
+    _addFact(&_rtcmValidFact);
+    _addFact(&_discardedBytesFact);
     _addFact(&_baseValidFact);
     _addFact(&_baseLatitudeFact);
     _addFact(&_baseLongitudeFact);

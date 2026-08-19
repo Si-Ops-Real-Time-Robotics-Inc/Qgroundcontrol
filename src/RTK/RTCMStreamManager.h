@@ -26,14 +26,15 @@ class NetworkRTCMFactGroup;
 class RTCMFileLogger;
 class RTCMMavlink;
 class RTCMNetworkSource;
-class RtcmBaseParser;
+class RtcmStreamParser;
 class NtripSourceTable;
 class QThread;
 
 Q_MOC_INCLUDE("FactGroup.h")
 
 /// App singleton that drives a network RTCM correction source (NTRIP / TCP / UDP),
-/// forwards the RTCM to all vehicles via RTCMMavlink, and optionally logs it to a file.
+/// validates the incoming bytes as RTCM3 (RtcmStreamParser) before forwarding them to all
+/// vehicles via RTCMMavlink, and optionally logs the raw stream to a file.
 /// Mirrors the GPSRtk serial pipeline (worker QThread + RTCMMavlink) but transport-agnostic.
 class RTCMStreamManager : public QObject
 {
@@ -91,6 +92,7 @@ private slots:
     void _onSourceConnectedChanged(bool connected);
     void _onSourceError(const QString &errorString);
     void _onSourceBytesReceived(quint64 totalBytes);
+    void _updateValidationFacts();
     void _onSourceTypeSettingChanged();
     void _onLogSettingChanged();
     void _onLogBytesWritten(quint64 totalBytes);
@@ -113,7 +115,7 @@ private:
     QThread *_workerThread = nullptr;
     RTCMMavlink *_rtcmMavlink = nullptr;
     RTCMFileLogger *_fileLogger = nullptr;
-    RtcmBaseParser *_baseParser = nullptr;
+    RtcmStreamParser *_streamParser = nullptr;
     NetworkRTCMFactGroup *_factGroup = nullptr;
     NtripSourceTable *_sourceTable = nullptr;
 
@@ -136,7 +138,7 @@ private:
     QTimer _ggaTimer;
     QGeoCoordinate _lastGGACoordinate;  ///< last known drone position, kept so GGA keeps flowing if the vehicle drops
     QElapsedTimer _rateTimer;
-    quint64 _lastByteCount = 0;
+    quint64 _lastValidByteCount = 0;  ///< validated RTCM bytes at the last rate tick
 
     static constexpr uint32_t kThreadDisconnectTimeout = 2000;
     static constexpr int kGGAIntervalMs = 10000;

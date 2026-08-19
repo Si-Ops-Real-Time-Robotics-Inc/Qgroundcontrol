@@ -49,7 +49,7 @@ here. If you get only this right, RTK works.
 |------|------|---------|
 | bit 0 | fragmented | 1 = this RTCM message is split across multiple `GPS_RTCM_DATA` messages |
 | bits 1–2 | fragment id | 0..3, position of this fragment within the sequence |
-| bits 3–7 | sequence id | 0..31, increments once per **input RTCM chunk**, wraps at 32 |
+| bits 3–7 | sequence id | low 5 bits of a free-running counter that increments once per **input RTCM chunk** |
 
 **Algorithm** (feed it whatever bytes arrive from the source; chunk boundaries do not matter):
 
@@ -76,9 +76,18 @@ on_rtcm_bytes(buf):
 ```
 
 Notes for porting:
+- **The fragment id is only 2 bits, so one input chunk may not exceed 4 × 180 = 720 bytes.** The loop
+  above does not enforce that: a longer chunk lets `fragmentId` reach 4, which shifts into the
+  sequence-id bits and corrupts reassembly on the vehicle. Reads from a TCP/NTRIP socket can exceed
+  720 bytes after a stall or with large MSM7 sets, so slice the input into ≤ 720-byte chunks (each
+  with its own sequence id) before entering the loop. QGC did have this bug; `RTCMMavlink::
+  RTCMDataUpdate()` now does exactly that slicing and delegates each chunk to `_sendSequence()`.
 - Send to **every connected vehicle** (or the target vehicle) on its primary MAVLink link, using that
   link's channel for encoding.
-- You do **not** need to parse RTCM to forward it — pass the bytes through verbatim. Both PX4 and
+- You do **not** need to *decode* RTCM to forward it — the payload passes through verbatim. You
+  should still **frame-validate** it first (§1.6): whatever arrives on the socket is not necessarily
+  RTCM, and a caster error page, an NMEA stream or line noise forwarded blindly goes straight into the
+  vehicle's GPS. Validate framing + CRC, forward only whole valid frames, drop the rest. Both PX4 and
   ArduPilot accept this and reassemble fragments themselves.
 - This is exactly the same message the serial-RTK-base path uses, so a receiver that already supports a
   USB RTK base needs no firmware change.
@@ -166,9 +175,10 @@ closes (HTTP/1.0 `Connection: close`) or `ENDSOURCETABLE` appears, then parse: e
 
 ### 1.6 Base station position from RTCM 1005 / 1006 (for a map marker)
 
-To show where the base station is, decode RTCM message types **1005** (stationary ARP) and **1006**
-(ARP + antenna height) out of the same stream (a passive tap — never modify the bytes going to the
-vehicle).
+The frame walk below serves two purposes: it decodes RTCM **1005** (stationary ARP) and **1006**
+(ARP + antenna height) for a map marker, and — more importantly — it is the **validation gate**
+that decides what is allowed onto the MAVLink link at all (see the note in §1.1). Forward only
+frames that pass it; count everything else as discarded and surface that in the UI.
 
 **RTCM3 frame:**
 
@@ -181,6 +191,9 @@ last 3 bytes: CRC-24Q over (preamble + 2 length bytes + payload)
 
 - **CRC-24Q** (a.k.a. Qualcomm): polynomial `0x1864CFB`, init `0`, no reflection, process MSB-first,
   24-bit result. Use it to validate each frame; on mismatch skip 1 byte and resync on the next `0xD3`.
+- Check the **6 reserved bits** (they are always zero) and reject a zero length before trusting the
+  header. Without that, a stray `0xD3` can claim a ~1 kB payload and stall forwarding until that many
+  more bytes arrive, instead of resyncing on the very next byte.
 - **Bit fields** (MSB-first bit offsets into the payload):
   - message number: bits `0..11` (12 bits) → must be 1005 or 1006
   - reference station id: bits `12..23`
@@ -193,8 +206,11 @@ last 3 bytes: CRC-24Q over (preamble + 2 length bytes + payload)
 ### 1.7 File logging
 
 Write the raw RTCM3 byte stream to a file **verbatim** (no framing) so it can be replayed by any RTCM
-tool. **Flush after every write** so a crash loses at most the last chunk. Auto-name by timestamp
-(`rtcm_YYYY-MM-DD_hh-mm-ss.rtcm3`) in the app's user-visible save folder.
+tool. **Flush after every write** so a crash loses at most the last chunk. When no path is configured,
+auto-name by timestamp (`rtcm_YYYY-MM-DD_hh-mm-ss.rtcm3`) inside an `RTCMLogs/` folder under the app's
+**user-visible save folder** — not a private app directory, or the user cannot get the file off a tablet
+(fall back to app-data, then temp, if that folder is unset). Opening in append mode plus a live on/off
+toggle means logging can be started mid-stream without losing what is already on disk.
 
 ### 1.8 Bluetooth source (classic RFCOMM / Serial Port Profile)
 
@@ -333,9 +349,12 @@ range — show that instead of spinning forever.
 | bluetooth device name | string | display name of the paired device (§1.8) |
 | bluetooth device address | string | `AA:BB:CC:DD:EE:FF` — what the socket connects to (device UUID on iOS) |
 | log to file | bool | toggle (can be toggled live while streaming) |
+| rtcm log path | string | empty = auto-named file in the user save folder (§1.7) |
 
-Status exposed to UI: connected, source label, stream label, bytes/sec, base lat/lon/alt + station id,
-log file name + bytes written.
+Status exposed to UI (fact names as implemented): `connected`, `sourceType`, `mountpoint` (stream label
+— reused for the Bluetooth device label), `bytesPerSecond` (validated RTCM only, not raw socket
+bytes), `rtcmValid` / `discardedBytes` (§1.6 validation gate), `baseValid` / `baseLatitude` /
+`baseLongitude` / `baseAltitude` / `baseStationId`, `logFileName`, `logBytes`.
 
 ---
 
@@ -346,13 +365,13 @@ when `QGC_ENABLE_BLUETOOTH` is on — that flag is defined on the project target
 
 | File | Role |
 |------|------|
-| `RTCMStreamManager.{h,cc}` | app singleton; owns the worker thread + `RTCMMavlink` + base parser + file logger + GGA timer; `Q_INVOKABLE startStream()/stopStream()/fetchMountpoints()/scanBluetoothDevices()/selectBluetoothDevice()` |
+| `RTCMStreamManager.{h,cc}` | app singleton; owns the active source (+ its worker thread for the network transports), `RTCMMavlink`, base parser, file logger and GGA timer; `Q_INVOKABLE startStream()/stopStream()/fetchMountpoints()/scanBluetoothDevices()/stopBluetoothScan()/selectBluetoothDevice()` |
 | `RTCMNetworkSource.h` | abstract worker interface: `signals rtcmData / connectedChanged / errorOccurred / bytesReceived` |
 | `NtripClient.{h,cc}` | §1.2 handshake + §1.3 GGA; `useNtripHandshake=false` makes it the §1.5 raw-TCP source |
 | `UdpRtcmReceiver.{h,cc}` | §1.5 UDP source |
 | `BluetoothRtcmSource.{h,cc}` | §1.8 source + `BluetoothRtcmScanner` device picker (built only with `QGC_ENABLE_BLUETOOTH`) |
 | `NtripSourceTable.{h,cc}` | §1.4 source-table fetch/parse |
-| `RtcmBaseParser.{h,cc}` | §1.6 RTCM 1005/1006 decode (CRC-24Q, ECEF→WGS84) |
+| `RtcmStreamParser.{h,cc}` | §1.6 RTCM3 framing/CRC-24Q validation gate + 1005/1006 decode (ECEF→WGS84) |
 | `RTCMFileLogger.{h,cc}` | §1.7 logging |
 | `NetworkRTCMFactGroup.{h,cc}` + `NetworkRTCMFact.json` | runtime status facts for QML |
 
@@ -385,12 +404,10 @@ runtime request is `RTCMStreamManager::_withBluetoothPermission()`, which re-run
 
 ## 4. UI — what to display, and what is already built
 
-§4.0–4.6 are about the **status panel** (what an RTCM/NTRIP connection should surface and where each
-value comes from). §4.7 documents the **Bluetooth controls** as shipped, and §4.8 is the hands-on
-"try it yourself" walkthrough.
-
-What a good NTRIP/RTCM status panel should surface, grouped by purpose. The **Source** column says where
-each value comes from so it can be reproduced on any platform (§ refers to Part 1).
+§4.0 is the **status panel as shipped** (validated live); §4.1–4.6 are what a good panel should surface
+on top of it, grouped by purpose, with a **Source** column saying where each value comes from so it can
+be reproduced on any platform (§ refers to Part 1). §4.7 documents the **Bluetooth controls** as shipped
+and the rules behind them, and §4.8 is the hands-on "try it yourself" walkthrough.
 
 ### 4.0 Currently implemented panel (validated live)
 
@@ -473,8 +490,9 @@ actually has: *"why didn't it connect?"* and *"is it working / did the drone rea
 
 ### 4.7 Bluetooth source UI (as implemented)
 
-The Bluetooth source adds three rows to the same settings page; everything else (log toggle, Connect
-button, Status block) is shared with the network sources. Layout as shipped:
+The Bluetooth source adds four things to the same settings page — a hint, the selected-device row, the
+scan row and an error line; everything else (log toggle, Connect button, Status block) is shared with the
+network sources. Layout as shipped:
 
 ```
 ┌ Network RTCM Source ─────────────────────────────────────────────────────┐
@@ -503,7 +521,7 @@ Control behaviour — the rules that make it usable:
 | `Scan Devices` | label becomes `Scanning…` and the button disables while an inquiry runs — and **only** then. Never gate it on an "adapter available" check: on Android that check cannot succeed until Bluetooth access is granted, and this button is what asks for it, so gating it deadlocks the flow (button greyed out + "No Bluetooth adapter available" forever on a fresh install) |
 | adapter availability | treat it as **optimistic until proven otherwise**: assume present, probe the adapter only *after* the permission grant inside the scan/connect flow, and expose it as a notifying property, not a constant — a value read once at page load is read too early on Android. Desktop may probe at startup (no permission needed there) |
 | results combo | hidden while the list is empty (a permanently empty dropdown reads as "broken"); appears and grows **during** the scan; selecting an entry writes name+address into settings immediately |
-| error line | one warning-coloured line under the rows: `No Bluetooth adapter available` when there is no adapter, otherwise the last Bluetooth error (permission denied, no SPP service, socket error). **Cleared on a new scan/connect** so a stale error never sits under a working connection |
+| error line | one warning-coloured line under the rows, showing **one string owned by the backend** (permission denied, no adapter, no SPP service, socket error, "select a device first"). Do not compose it in the view from other properties — that is how the page ends up asserting "No Bluetooth adapter available" before anything has actually been checked. **Cleared when a new scan/connect starts** so a stale error never sits under a working connection |
 | `Connect` | shared with the other sources; label flips to `Disconnect` while a stream is active. Pressing it with no device selected sets the error line rather than silently doing nothing |
 | Status block | appears only while streaming; `Status` reads `Connecting…` until the socket reports connected |
 
@@ -528,10 +546,15 @@ Settings keys are `rtcmSourceType = 5`, `bluetoothDeviceName`, `bluetoothDeviceA
 
 1. Pair the receiver in the OS Bluetooth panel first (Windows Settings → Bluetooth, or Android
    Settings → Bluetooth). The GCS never pairs.
-2. Run the app with the module's logging on — this is the fastest way to see where a connect stalls:
-   `QT_LOGGING_RULES="qgc.rtk.*=true"` (Windows also needs `QT_FORCE_STDERR_LOGGING=1` and
-   `QT_ASSUME_STDERR_HAS_CONSOLE=1` to get output out of a GUI build; Android: `adb logcat | grep qgc.rtk`).
-   Add `qt.bluetooth*=true` when the failure looks like it is inside the stack rather than the app.
+2. Turn the module's logging on — this is the fastest way to see where a connect stalls. Two ways:
+   - **In-app, no rebuild or shell needed** (the only practical option on a tablet): Application
+     Settings → **Console** → *Logging categories* → tick the `qgc.rtk.*` categories. The Console page
+     also shows the messages, so the whole loop stays on the device.
+   - **Environment**, for a desktop dev loop: `QT_LOGGING_RULES="qgc.rtk.*=true"`. On Windows a GUI
+     build writes nothing to a console unless you also set `QT_FORCE_STDERR_LOGGING=1` and
+     `QT_ASSUME_STDERR_HAS_CONSOLE=1` and redirect stderr. On Android, `adb logcat | grep qgc.rtk`.
+
+   Add `qt.bluetooth*=true` when the failure looks like it is inside the Qt stack rather than the app.
 3. Application Settings → **RTK / NTRIP** → Correction Source = **Bluetooth** → *Scan Devices* → pick the
    receiver → **Connect**.
 4. A healthy connect looks exactly like this (real log, Windows):

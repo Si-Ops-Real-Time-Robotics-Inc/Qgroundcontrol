@@ -119,8 +119,20 @@ ToolIndicatorPage {
                 }
 
                 LabelledLabel {
-                    label:      qsTr("Data Rate")
+                    label:      qsTr("RTCM Rate")
                     labelText:  rtcmStatus.bytesPerSecond.valueString + qsTr(" B/s")
+                }
+
+                LabelledLabel {
+                    label:      qsTr("Stream Format")
+                    labelText:  rtcmStatus.rtcmValid.value ? qsTr("Valid RTCM3") : qsTr("No valid RTCM3 yet")
+                    visible:    rtcmStatus.connected.value
+                }
+
+                LabelledLabel {
+                    label:      qsTr("Discarded")
+                    labelText:  (rtcmStatus.discardedBytes.value / 1024).toFixed(1) + qsTr(" KB non-RTCM")
+                    visible:    rtcmStatus.discardedBytes.value > 0
                 }
 
                 LabelledLabel {

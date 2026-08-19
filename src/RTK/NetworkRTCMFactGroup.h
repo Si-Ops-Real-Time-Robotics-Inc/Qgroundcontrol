@@ -23,6 +23,8 @@ class NetworkRTCMFactGroup : public FactGroup
     Q_PROPERTY(Fact *sourceType     READ sourceType     CONSTANT)
     Q_PROPERTY(Fact *mountpoint     READ mountpoint     CONSTANT)
     Q_PROPERTY(Fact *bytesPerSecond READ bytesPerSecond CONSTANT)
+    Q_PROPERTY(Fact *rtcmValid      READ rtcmValid      CONSTANT)
+    Q_PROPERTY(Fact *discardedBytes READ discardedBytes CONSTANT)
     Q_PROPERTY(Fact *baseValid      READ baseValid      CONSTANT)
     Q_PROPERTY(Fact *baseLatitude   READ baseLatitude   CONSTANT)
     Q_PROPERTY(Fact *baseLongitude  READ baseLongitude  CONSTANT)
@@ -39,6 +41,8 @@ public:
     Fact *sourceType() { return &_sourceTypeFact; }
     Fact *mountpoint() { return &_mountpointFact; }
     Fact *bytesPerSecond() { return &_bytesPerSecondFact; }
+    Fact *rtcmValid() { return &_rtcmValidFact; }
+    Fact *discardedBytes() { return &_discardedBytesFact; }
     Fact *baseValid() { return &_baseValidFact; }
     Fact *baseLatitude() { return &_baseLatitudeFact; }
     Fact *baseLongitude() { return &_baseLongitudeFact; }
@@ -52,6 +56,8 @@ private:
     Fact _sourceTypeFact = Fact(0, QStringLiteral("sourceType"), FactMetaData::valueTypeString);
     Fact _mountpointFact = Fact(0, QStringLiteral("mountpoint"), FactMetaData::valueTypeString);
     Fact _bytesPerSecondFact = Fact(0, QStringLiteral("bytesPerSecond"), FactMetaData::valueTypeDouble);
+    Fact _rtcmValidFact = Fact(0, QStringLiteral("rtcmValid"), FactMetaData::valueTypeBool);
+    Fact _discardedBytesFact = Fact(0, QStringLiteral("discardedBytes"), FactMetaData::valueTypeDouble);
     Fact _baseValidFact = Fact(0, QStringLiteral("baseValid"), FactMetaData::valueTypeBool);
     Fact _baseLatitudeFact = Fact(0, QStringLiteral("baseLatitude"), FactMetaData::valueTypeDouble);
     Fact _baseLongitudeFact = Fact(0, QStringLiteral("baseLongitude"), FactMetaData::valueTypeDouble);

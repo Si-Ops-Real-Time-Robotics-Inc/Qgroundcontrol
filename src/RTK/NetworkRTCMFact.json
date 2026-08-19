@@ -23,10 +23,24 @@
 },
 {
     "name":             "bytesPerSecond",
-    "shortDesc":        "Data Rate",
+    "shortDesc":        "RTCM Data Rate",
     "type":             "double",
     "decimalPlaces":    2,
     "units":            "B/s",
+    "default":          0
+},
+{
+    "name":             "rtcmValid",
+    "shortDesc":        "Valid RTCM",
+    "type":             "bool",
+    "default":          false
+},
+{
+    "name":             "discardedBytes",
+    "shortDesc":        "Discarded",
+    "type":             "double",
+    "decimalPlaces":    0,
+    "units":            "B",
     "default":          0
 },
 {

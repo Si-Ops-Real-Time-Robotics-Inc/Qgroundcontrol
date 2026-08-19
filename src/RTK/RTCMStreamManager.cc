@@ -18,7 +18,7 @@
 #include "QGCLoggingCategory.h"
 #include "RTCMFileLogger.h"
 #include "RTCMMavlink.h"
-#include "RtcmBaseParser.h"
+#include "RtcmStreamParser.h"
 #include "RTKSettings.h"
 #include "SettingsManager.h"
 #include "UdpRtcmReceiver.h"
@@ -186,30 +186,36 @@ void RTCMStreamManager::startStream()
         (void) connect(_workerThread, &QThread::finished, _worker, &QObject::deleteLater);
     }
 
-    // RTCMMavlink lives on the main thread; the cross-thread signal marshals a copy.
+    // Everything the source produces is funnelled through the parser first: only complete,
+    // CRC-valid RTCM3 frames reach RTCMMavlink, so a caster error page, an NMEA stream or line
+    // noise can never be injected into the vehicle GPS. The parser also taps 1005/1006 for the
+    // base station position shown on the map.
+    // Both live on the main thread; the cross-thread signal from the worker marshals a copy.
     _rtcmMavlink = new RTCMMavlink(this);
-    (void) connect(_worker, &RTCMNetworkSource::rtcmData, _rtcmMavlink, &RTCMMavlink::RTCMDataUpdate, Qt::QueuedConnection);
+    _streamParser = new RtcmStreamParser(this);
+    (void) connect(_worker, &RTCMNetworkSource::rtcmData, _streamParser, &RtcmStreamParser::addData, Qt::QueuedConnection);
+    (void) connect(_streamParser, &RtcmStreamParser::rtcmFrames, _rtcmMavlink, &RTCMMavlink::RTCMDataUpdate);
+    (void) connect(_streamParser, &RtcmStreamParser::basePositionUpdate, this, &RTCMStreamManager::_onBasePositionUpdate);
 
+    // The file log keeps the raw stream - that is what makes it useful for diagnosing a source
+    // that is not sending RTCM in the first place.
     if (rtkSettings->logRtcmToFile()->rawValue().toBool()) {
         _startFileLogging();
     }
-
-    // Passive tap to decode the base station position (RTCM 1005/1006) for map display.
-    _baseParser = new RtcmBaseParser(this);
-    (void) connect(_worker, &RTCMNetworkSource::rtcmData, _baseParser, &RtcmBaseParser::addData, Qt::QueuedConnection);
-    (void) connect(_baseParser, &RtcmBaseParser::basePositionUpdate, this, &RTCMStreamManager::_onBasePositionUpdate, Qt::QueuedConnection);
 
     (void) connect(_worker, &RTCMNetworkSource::connectedChanged, this, &RTCMStreamManager::_onSourceConnectedChanged, Qt::QueuedConnection);
     (void) connect(_worker, &RTCMNetworkSource::errorOccurred, this, &RTCMStreamManager::_onSourceError, Qt::QueuedConnection);
     (void) connect(_worker, &RTCMNetworkSource::bytesReceived, this, &RTCMStreamManager::_onSourceBytesReceived, Qt::QueuedConnection);
 
-    _lastByteCount = 0;
+    _lastValidByteCount = 0;
     _rateTimer.start();
 
     _factGroup->sourceType()->setRawValue(sourceLabel);
     _factGroup->mountpoint()->setRawValue(mountLabel);
     _factGroup->bytesPerSecond()->setRawValue(0);
     _factGroup->connected()->setRawValue(false);
+    _factGroup->rtcmValid()->setRawValue(false);
+    _factGroup->discardedBytes()->setRawValue(0);
 
     if (_workerThread) {
         _workerThread->start();
@@ -257,9 +263,9 @@ void RTCMStreamManager::stopStream()
 
     _stopFileLogging();
 
-    if (_baseParser) {
-        _baseParser->deleteLater();
-        _baseParser = nullptr;
+    if (_streamParser) {
+        _streamParser->deleteLater();
+        _streamParser = nullptr;
     }
 
     if (_factGroup) {
@@ -268,6 +274,8 @@ void RTCMStreamManager::stopStream()
         _factGroup->mountpoint()->setRawValue(QString());
         _factGroup->bytesPerSecond()->setRawValue(0);
         _factGroup->baseValid()->setRawValue(false);
+        _factGroup->rtcmValid()->setRawValue(false);
+        _factGroup->discardedBytes()->setRawValue(0);
     }
 
     emit activeChanged();
@@ -276,8 +284,16 @@ void RTCMStreamManager::stopStream()
 void RTCMStreamManager::_onSourceConnectedChanged(bool connected)
 {
     qCDebug(RTCMStreamManagerLog) << "Source connected:" << connected;
+
+    // A reconnect restarts the byte stream, so any half-assembled frame is stale.
+    if (connected && _streamParser) {
+        _streamParser->reset();
+        _lastValidByteCount = 0;
+    }
+
     if (_factGroup) {
         _factGroup->connected()->setRawValue(connected);
+        _updateValidationFacts();
     }
 }
 
@@ -297,17 +313,42 @@ void RTCMStreamManager::_onSourceError(const QString &errorString)
 
 void RTCMStreamManager::_onSourceBytesReceived(quint64 totalBytes)
 {
+    Q_UNUSED(totalBytes);
+
     if (!_rateTimer.isValid() || !_factGroup) {
         return;
     }
 
     const qint64 elapsed = _rateTimer.elapsed();
-    if (elapsed >= 1000) {
-        const double rate = (static_cast<double>(totalBytes - _lastByteCount) * 1000.0) / static_cast<double>(elapsed);
-        _factGroup->bytesPerSecond()->setRawValue(rate);
-        _lastByteCount = totalBytes;
-        (void) _rateTimer.restart();
+    if (elapsed < 1000) {
+        return;
     }
+
+    // The displayed rate counts validated RTCM only, not raw socket traffic: a source spewing
+    // HTML or NMEA must not look like it is delivering corrections. The sources emit rtcmData()
+    // before bytesReceived() over the same queued connection, so the parser has already consumed
+    // this chunk by the time we get here.
+    const quint64 validBytes = _streamParser ? _streamParser->validBytes() : 0;
+    if (validBytes < _lastValidByteCount) {
+        _lastValidByteCount = 0; // the parser was reset on reconnect
+    }
+
+    const double rate = (static_cast<double>(validBytes - _lastValidByteCount) * 1000.0) / static_cast<double>(elapsed);
+    _factGroup->bytesPerSecond()->setRawValue(rate);
+    _lastValidByteCount = validBytes;
+    (void) _rateTimer.restart();
+    _updateValidationFacts();
+}
+
+void RTCMStreamManager::_updateValidationFacts()
+{
+    if (!_factGroup) {
+        return;
+    }
+
+    const bool valid = (_streamParser && (_streamParser->validFrames() > 0));
+    _factGroup->rtcmValid()->setRawValue(valid);
+    _factGroup->discardedBytes()->setRawValue(_streamParser ? static_cast<double>(_streamParser->discardedBytes()) : 0.0);
 }
 
 void RTCMStreamManager::fetchMountpoints()

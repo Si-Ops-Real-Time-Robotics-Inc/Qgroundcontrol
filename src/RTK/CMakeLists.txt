@@ -11,8 +11,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         RTCMNetworkSource.h
         RTCMStreamManager.cc
         RTCMStreamManager.h
-        RtcmBaseParser.cc
-        RtcmBaseParser.h
+        RtcmStreamParser.cc
+        RtcmStreamParser.h
         UdpRtcmReceiver.cc
         UdpRtcmReceiver.h
 )

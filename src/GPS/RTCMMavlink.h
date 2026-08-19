@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <QtCore/QByteArrayView>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QLoggingCategory>
 #include <QtCore/QObject>
@@ -30,6 +31,8 @@ public slots:
     void RTCMDataUpdate(QByteArrayView data);
 
 private:
+    /// Send up to kMaxSequenceLength bytes as a single GPS_RTCM_DATA sequence, fragmenting if needed.
+    void _sendSequence(QByteArrayView data);
     void _calculateBandwith(qsizetype bytes);
     static void _sendMessageToVehicle(const mavlink_gps_rtcm_data_t &data);
 
