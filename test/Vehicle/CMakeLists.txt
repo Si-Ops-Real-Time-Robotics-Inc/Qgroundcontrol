@@ -12,6 +12,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         SendMavCommandWithHandlerTest.h
         SendMavCommandWithSignallingTest.cc
         SendMavCommandWithSignallingTest.h
+        VehicleGPSFactGroupTest.cc
+        VehicleGPSFactGroupTest.h
         VehicleLinkManagerTest.cc
         VehicleLinkManagerTest.h
 )

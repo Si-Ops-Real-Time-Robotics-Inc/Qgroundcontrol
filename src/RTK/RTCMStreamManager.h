@@ -24,6 +24,10 @@ class BluetoothRtcmScanner;
 class FactGroup;
 class NetworkRTCMFactGroup;
 class RTCMFileLogger;
+class RinexNavWriter;
+class RinexObsWriter;
+class RtcmNavDecoder;
+class RtcmObsDecoder;
 class RTCMMavlink;
 class RTCMNetworkSource;
 class RtcmStreamParser;
@@ -95,12 +99,22 @@ private slots:
     void _updateValidationFacts();
     void _onSourceTypeSettingChanged();
     void _onLogSettingChanged();
+    void _onLogFormatSettingChanged();
     void _onLogBytesWritten(quint64 totalBytes);
+    void _onRinexObsBytesWritten(quint64 totalBytes);
+    void _onRinexNavBytesWritten(quint64 totalBytes);
+    void _onStationInfoChanged();
     void _onBasePositionUpdate(double latitude, double longitude, double altitude, int stationId);
     void _sendGGATick();
 
 private:
     void _startFileLogging();
+    /// True while any log file is open, whatever the format.
+    bool _fileLoggingActive() const;
+    /// Directory + stem shared by every log file of a session, so the .obs, .nav and .rtcm3 all
+    /// carry the same timestamp instead of drifting apart by a second.
+    static QString _logBasePath(const QString &configuredPath);
+    void _updateLogBytesFact();
     void _stopFileLogging();
     /// Runs action() once Bluetooth access is granted. Returns false if the permission is
     /// still pending (action runs later) or was denied (action never runs).
@@ -115,6 +129,15 @@ private:
     QThread *_workerThread = nullptr;
     RTCMMavlink *_rtcmMavlink = nullptr;
     RTCMFileLogger *_fileLogger = nullptr;
+    RtcmObsDecoder *_obsDecoder = nullptr;
+    RinexObsWriter *_rinexWriter = nullptr;
+    RtcmNavDecoder *_navDecoder = nullptr;
+    RinexNavWriter *_rinexNavWriter = nullptr;
+
+    // Each writer reports its own total; the fact shows what the session has written altogether.
+    quint64 _rawLogBytes = 0;
+    quint64 _rinexObsBytes = 0;
+    quint64 _rinexNavBytes = 0;
     RtcmStreamParser *_streamParser = nullptr;
     NetworkRTCMFactGroup *_factGroup = nullptr;
     NtripSourceTable *_sourceTable = nullptr;

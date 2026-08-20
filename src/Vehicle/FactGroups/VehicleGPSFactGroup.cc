@@ -22,6 +22,8 @@ VehicleGPSFactGroup::VehicleGPSFactGroup(QObject *parent)
     _addFact(&_hdopFact);
     _addFact(&_vdopFact);
     _addFact(&_courseOverGroundFact);
+    _addFact(&_horizontalAccuracyFact);
+    _addFact(&_verticalAccuracyFact);
     _addFact(&_lockFact);
     _addFact(&_countFact);
 
@@ -31,6 +33,21 @@ VehicleGPSFactGroup::VehicleGPSFactGroup(QObject *parent)
     _hdopFact.setRawValue(std::numeric_limits<float>::quiet_NaN());
     _vdopFact.setRawValue(std::numeric_limits<float>::quiet_NaN());
     _courseOverGroundFact.setRawValue(std::numeric_limits<float>::quiet_NaN());
+    _horizontalAccuracyFact.setRawValue(std::numeric_limits<float>::quiet_NaN());
+    _verticalAccuracyFact.setRawValue(std::numeric_limits<float>::quiet_NaN());
+}
+
+namespace {
+/// GPS_RAW_INT reports accuracies in millimetres. They are MAVLink 2 extension fields, so an
+/// autopilot that does not populate them leaves zero rather than the documented UINT32_MAX -
+/// and a zero metre accuracy is not a real reading either way.
+double accuracyFromMillimetres(uint32_t millimetres)
+{
+    if ((millimetres == UINT32_MAX) || (millimetres == 0)) {
+        return qQNaN();
+    }
+    return millimetres / 1000.0;
+}
 }
 
 void VehicleGPSFactGroup::handleMessage(Vehicle *vehicle, const mavlink_message_t &message)
@@ -65,6 +82,8 @@ void VehicleGPSFactGroup::_handleGpsRawInt(const mavlink_message_t &message)
     vdop()->setRawValue((gpsRawInt.epv == UINT16_MAX) ? qQNaN() : (gpsRawInt.epv / 100.0));
     courseOverGround()->setRawValue((gpsRawInt.cog == UINT16_MAX) ? qQNaN() : (gpsRawInt.cog / 100.0));
     lock()->setRawValue(gpsRawInt.fix_type);
+    horizontalAccuracy()->setRawValue(accuracyFromMillimetres(gpsRawInt.h_acc));
+    verticalAccuracy()->setRawValue(accuracyFromMillimetres(gpsRawInt.v_acc));
 
     _setTelemetryAvailable(true);
 }

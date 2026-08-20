@@ -205,12 +205,94 @@ last 3 bytes: CRC-24Q over (preamble + 2 length bytes + payload)
 
 ### 1.7 File logging
 
-Write the raw RTCM3 byte stream to a file **verbatim** (no framing) so it can be replayed by any RTCM
-tool. **Flush after every write** so a crash loses at most the last chunk. When no path is configured,
-auto-name by timestamp (`rtcm_YYYY-MM-DD_hh-mm-ss.rtcm3`) inside an `RTCMLogs/` folder under the app's
-**user-visible save folder** — not a private app directory, or the user cannot get the file off a tablet
-(fall back to app-data, then temp, if that folder is unset). Opening in append mode plus a live on/off
-toggle means logging can be started mid-stream without losing what is already on disk.
+Write the RTCM3 byte stream to a file **verbatim** (no framing of your own) so it can be replayed by
+any RTCM tool. Tap it **downstream of the §1.6 validation gate**, the same place the MAVLink forward
+hangs off: the log is then a clean RTCM3 recording that replays, rather than one with a caster error
+page or NMEA spliced into the middle. **Flush after every write** so a crash loses at most the last
+chunk. The formats are not exclusive - writing the raw `.rtcm3` alongside the decoded `.obs`/`.nav`
+costs a few KB/s and keeps everything the decoder chose not to represent, which is the difference
+between diagnosing a bad session later and guessing. Derive all three names from one base so they
+obviously belong to the same session. When no path is configured, auto-name by timestamp (`rtcm_YYYY-MM-DD_hh-mm-ss.rtcm3`) inside an
+`RTCMLogs/` folder under the app's **user-visible save folder** — not a private app directory, or the
+user cannot get the file off a tablet (fall back to app-data, then temp, if that folder is unset).
+Opening in append mode plus a live on/off toggle means logging can be started mid-stream without
+losing what is already on disk.
+
+### 1.7b RINEX observation output (PPK)
+
+Raw RTCM3 is a correction stream, not an archive format. Post-processing tools want RINEX, and
+getting there is a **full decode**, not a reformat: the observables live inside the MSM messages and
+have to be unpacked satellite by satellite, signal by signal.
+
+What the decode involves, in the order the bits appear:
+
+- **MSM header** - 12 bit message number, 12 bit station id, 30 bit GNSS epoch time, the
+  multiple-message bit (DF393), then 19 bits of indicators, a 64 bit satellite mask, a 32 bit signal
+  mask, and a satellites x signals cell mask. The masks are what make the message variable length.
+- **Satellite blocks** - rough range integer ms (8 bits), extended satellite info (4 bits, MSM5/7
+  only), rough range mod 1 ms (10 bits), rough phase range rate (14 bits, MSM5/7 only). Each field
+  is emitted for *every* satellite before the next field starts, not interleaved per satellite.
+- **Signal blocks** - fine pseudorange, fine phase range, lock time, half-cycle ambiguity, CNR, and
+  (MSM5/7) fine phase range rate, one array per field over the set cells. MSM6/7 use wider fields
+  and finer scaling than MSM4/5.
+- **Reconstruction** - `range = (roughMs + roughMod * 2^-10) * c/1000`, then add
+  `fine * 2^-24 * c/1000` for the pseudorange and `fine * 2^-29 * c/1000` for the phase range
+  (MSM6/7: `2^-29` and `2^-31`). Carrier phase in cycles is the phase range divided by the
+  wavelength, so **every signal needs its carrier frequency**.
+- **Signal id -> RINEX code** - a per-constellation table (RTCM signal 2 is GPS `1C`, 10 is `2W`,
+  and so on). Get this wrong and the file is plausible but useless.
+- **GLONASS is the awkward one** - FDMA, so L1/L2 frequency depends on the satellite's channel
+  number: `1602.0 + k*0.5625 MHz` and `1246.0 + k*0.4375 MHz`. `k` comes from the extended
+  satellite info, which **only MSM5 and MSM7 carry**. With MSM4/MSM6 you can still emit GLONASS
+  pseudoranges but not carrier phase, unless you also decode message 1020.
+
+Two things the format does not give you:
+
+- **No week number.** MSM carries a time of week only, so the GPS week has to come from the system
+  clock. A machine whose clock is more than half a week out will write the wrong date.
+- **Epoch assembly.** Each constellation arrives as its own message for the same instant. Group them
+  and emit when DF393 clears or when the time of week moves on, whichever comes first. Normalise
+  BeiDou first - its time of week runs 14 s behind GPS.
+
+The header needs 1005/1006 for `APPROX POSITION XYZ`, 1008/1033 for the antenna and receiver
+descriptors, and the observation-type list per constellation - which is only known after data has
+been seen, so buffer the first few epochs before committing to a header.
+
+**Scope note:** this yields the *base station's* observations. PPK needs the rover's raw
+observations too, and those come off the vehicle's receiver, not the correction stream.
+
+### 1.7c RINEX navigation output (broadcast ephemeris)
+
+An `.obs` on its own will not post-process: the solver needs broadcast ephemeris to compute
+satellite positions. That rides in the same stream, in its own message per constellation:
+
+| Message | Constellation | Bits | Notes |
+|---------|---------------|------|-------|
+| 1019 | GPS | 488 | Keplerian, 10 bit week (wraps - un-roll it) |
+| 1020 | GLONASS | 360 | state vector, **sign-magnitude fields** |
+| 1042 | BeiDou | 511 | wider correction terms, 8 s time resolution |
+| 1044 | QZSS | 485 | GPS parameters in a different field order |
+| 1045 | Galileo F/NAV | 496 | one broadcast group delay |
+| 1046 | Galileo I/NAV | 503 | two group delays, wider health word |
+
+The traps, in the order they bite:
+
+- **GLONASS is sign-magnitude.** The top bit is a sign flag, not a two's-complement sign. Reading
+  it the usual way gives plausible magnitudes with wrong signs, and an orbit radius that is
+  nonsense. Everything else in the family is two's complement.
+- **The week wraps.** GPS and QZSS broadcast 10 bits, so the week has to be lifted into the current
+  era using the wall clock. Galileo's week is offset instead: `gps_week = galileo_week + 1024`.
+  BeiDou counts its own weeks from 2006-01-01.
+- **Time systems differ per constellation.** RINEX records each in its own system - GPS/QZSS and
+  Galileo in GPS time, BeiDou in BeiDou time, GLONASS in **UTC** (its `tb` is a Moscow-time slot,
+  so subtract three hours, and the date comes from `N4`/`Nt`).
+- **Satellites rebroadcast constantly.** De-duplicate on satellite + reference time + issue of
+  data, or a few minutes of stream produces hundreds of identical records.
+- **Numbers are Fortran `D19.12`,** i.e. `-0.123456789012D-04`, not C's `1.23E-05`.
+
+Record layouts differ: GPS/QZSS/Galileo/BeiDou use eight lines (epoch + clock, then seven broadcast
+orbit lines); GLONASS uses four. The header depends on nothing data-derived, so unlike the
+observation file it can be written the moment the file opens.
 
 ### 1.8 Bluetooth source (classic RFCOMM / Serial Port Profile)
 
@@ -372,7 +454,12 @@ when `QGC_ENABLE_BLUETOOTH` is on — that flag is defined on the project target
 | `BluetoothRtcmSource.{h,cc}` | §1.8 source + `BluetoothRtcmScanner` device picker (built only with `QGC_ENABLE_BLUETOOTH`) |
 | `NtripSourceTable.{h,cc}` | §1.4 source-table fetch/parse |
 | `RtcmStreamParser.{h,cc}` | §1.6 RTCM3 framing/CRC-24Q validation gate + 1005/1006 decode (ECEF→WGS84) |
-| `RTCMFileLogger.{h,cc}` | §1.7 logging |
+| `RTCMFileLogger.{h,cc}` | §1.7 raw RTCM3 logging (can run alongside the RINEX writers) |
+| `RtcmObsDecoder.{h,cc}` | §1.7b MSM4/5/6/7 -> observation epochs + station metadata |
+| `RinexObsWriter.{h,cc}` | §1.7b streaming RINEX 3.04 observation writer |
+| `RtcmNavDecoder.{h,cc}` | §1.7c 1019/1020/1042/1044/1045/1046 -> broadcast ephemeris |
+| `RinexNavWriter.{h,cc}` | §1.7c streaming RINEX 3.04 navigation writer (de-duplicating) |
+| `RtcmBitReader.h` | shared MSB-first bit reader, incl. the GLONASS sign-magnitude helper |
 | `NetworkRTCMFactGroup.{h,cc}` + `NetworkRTCMFact.json` | runtime status facts for QML |
 
 Reused, unchanged: **`src/GPS/RTCMMavlink.{h,cc}`** — the §1.1 forwarder (moved above the

@@ -38,6 +38,7 @@ public:
     DEFINE_SETTINGFACT(udpPort)
     DEFINE_SETTINGFACT(bluetoothDeviceName)
     DEFINE_SETTINGFACT(bluetoothDeviceAddress)
+    DEFINE_SETTINGFACT(rtcmLogFormat)
     DEFINE_SETTINGFACT(logRtcmToFile)
     DEFINE_SETTINGFACT(rtcmLogPath)
 };

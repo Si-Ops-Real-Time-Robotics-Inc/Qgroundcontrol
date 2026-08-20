@@ -40,6 +40,20 @@
     "units":            "deg"
 },
 {
+    "name":             "horizontalAccuracy",
+    "shortDesc": "Horizontal Accuracy",
+    "type":             "double",
+    "decimalPlaces":    2,
+    "units":            "m"
+},
+{
+    "name":             "verticalAccuracy",
+    "shortDesc": "Vertical Accuracy",
+    "type":             "double",
+    "decimalPlaces":    2,
+    "units":            "m"
+},
+{
     "name":             "lock",
     "shortDesc": "GPS Lock",
     "type":             "uint32",

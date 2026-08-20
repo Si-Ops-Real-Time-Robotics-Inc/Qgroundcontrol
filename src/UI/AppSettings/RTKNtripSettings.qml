@@ -179,6 +179,12 @@ SettingsPage {
             visible:            rtcmSourceType === rtcmSourceBluetooth && rtcmStreamManager.bluetoothError !== ""
         }
 
+        LabelledFactComboBox {
+            label:              qsTr("Log Format")
+            fact:               rtkSettings.rtcmLogFormat
+            visible:            _isNetworkSource
+        }
+
         FactCheckBoxSlider {
             Layout.fillWidth:   true
             text:               qsTr("Log RTCM to file")

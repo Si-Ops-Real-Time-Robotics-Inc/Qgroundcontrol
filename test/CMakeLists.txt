@@ -67,6 +67,9 @@ add_qgc_test(FollowMeTest)
 add_subdirectory(GPS)
 add_qgc_test(GpsTest)
 
+add_subdirectory(RTK)
+add_qgc_test(RtcmRinexTest)
+
 add_subdirectory(MAVLink)
 add_qgc_test(StatusTextHandlerTest)
 add_qgc_test(SigningTest)
@@ -131,6 +134,7 @@ add_qgc_test(MAVLinkLogManagerTest)
 # add_qgc_test(SendMavCommandWithHandlerTest)
 # add_qgc_test(SendMavCommandWithSignalingTest)
 add_qgc_test(VehicleLinkManagerTest)
+add_qgc_test(VehicleGPSFactGroupTest)
 
 # add_qgc_test(FlightGearUnitTest)
 # add_qgc_test(LinkManagerTest)

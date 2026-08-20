@@ -172,16 +172,25 @@
     "default":              ""
 },
 {
+    "name":                 "rtcmLogFormat",
+    "shortDesc":            "Log Format",
+    "longDesc":             "RINEX writes decoded .obs and .nav files for post-processing (PPK). Raw RTCM3 writes the correction stream byte-for-byte, which is what you want when diagnosing a source. Both writes all three files from the same stream.",
+    "type":                 "uint32",
+    "enumStrings":          "RINEX (.obs + .nav),Raw RTCM3 (.rtcm3),Both",
+    "enumValues":           "0,1,2",
+    "default":              0
+},
+{
     "name":                 "logRtcmToFile",
     "shortDesc":            "Log RTCM to file",
-    "longDesc":             "Save the incoming raw RTCM3 stream to a file on disk.",
+    "longDesc":             "Save the incoming corrections to a file on disk, in the format selected below.",
     "type":                 "bool",
     "default":              false
 },
 {
     "name":                 "rtcmLogPath",
     "shortDesc":            "RTCM Log File",
-    "longDesc":             "Path of the file to save the raw RTCM3 stream to. Leave empty to use a timestamped file in the application log directory.",
+    "longDesc":             "Path of the log file. Leave empty for a timestamped file in the RTCMLogs folder under the application save directory.",
     "type":                 "string",
     "default":              ""
 }

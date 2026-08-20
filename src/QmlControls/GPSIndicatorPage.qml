@@ -71,6 +71,20 @@ ToolIndicatorPage {
                     label:      qsTr("Course Over Ground")
                     labelText:  activeVehicle ? activeVehicle.gps.courseOverGround.valueString : valueNA
                 }
+
+                LabelledLabel {
+                    label:      qsTr("H Acc")
+                    labelText:  activeVehicle && !isNaN(activeVehicle.gps.horizontalAccuracy.rawValue)
+                                    ? activeVehicle.gps.horizontalAccuracy.valueString + " " + activeVehicle.gps.horizontalAccuracy.units
+                                    : valueNA
+                }
+
+                LabelledLabel {
+                    label:      qsTr("V Acc")
+                    labelText:  activeVehicle && !isNaN(activeVehicle.gps.verticalAccuracy.rawValue)
+                                    ? activeVehicle.gps.verticalAccuracy.valueString + " " + activeVehicle.gps.verticalAccuracy.units
+                                    : valueNA
+                }
             }
 
             SettingsGroupLayout {

@@ -1273,9 +1273,11 @@ void MockLink::_sendGpsRawInt()
         8,                                      // satellites visible
         //-- Extension
         0,                                      // Altitude (above WGS84, EGM96 ellipsoid), in meters * 1000 (positive for up).
-        0,                                      // Position uncertainty in meters * 1000 (positive for up).
-        0,                                      // Altitude uncertainty in meters * 1000 (positive for up).
-        0,                                      // Speed uncertainty in meters * 1000 (positive for up).
+        // Report accuracies a real receiver would, so anything displaying them can be exercised.
+        // Zero here is indistinguishable from "this autopilot does not fill the field in".
+        350,                                    // Position uncertainty, mm.
+        550,                                    // Altitude uncertainty, mm.
+        180,                                    // Speed uncertainty, mm/s.
         0,                                      // Heading / track uncertainty in degrees * 1e5.
         65535                                   // Yaw not provided
     );

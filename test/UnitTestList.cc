@@ -44,6 +44,9 @@
 // GPS
 #include "GpsTest.h"
 
+// RTK
+#include "RtcmRinexTest.h"
+
 // MAVLink
 #include "StatusTextHandlerTest.h"
 #include "SigningTest.h"
@@ -106,6 +109,7 @@
 // #include "RequestMessageTest.h"
 // #include "SendMavCommandWithHandlerTest.h"
 // #include "SendMavCommandWithSignalingTest.h"
+#include "VehicleGPSFactGroupTest.h"
 #include "VehicleLinkManagerTest.h"
 
 // Missing
@@ -148,6 +152,9 @@ int runTests(bool stress, QStringView unitTestOptions)
 
     // GPS
     // UT_REGISTER_TEST(GpsTest)
+
+    // RTK
+    UT_REGISTER_TEST(RtcmRinexTest)
 
     // MAVLink
     UT_REGISTER_TEST(StatusTextHandlerTest)
@@ -209,6 +216,7 @@ int runTests(bool stress, QStringView unitTestOptions)
     // UT_REGISTER_TEST(RequestMessageTest)
     // UT_REGISTER_TEST(SendMavCommandWithHandlerTest)
     // UT_REGISTER_TEST(SendMavCommandWithSignalingTest)
+    UT_REGISTER_TEST(VehicleGPSFactGroupTest)
     UT_REGISTER_TEST(VehicleLinkManagerTest)
 
     // Missing

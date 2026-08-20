@@ -11,6 +11,15 @@ target_sources(${CMAKE_PROJECT_NAME}
         RTCMNetworkSource.h
         RTCMStreamManager.cc
         RTCMStreamManager.h
+        RinexNavWriter.cc
+        RinexNavWriter.h
+        RinexObsWriter.cc
+        RinexObsWriter.h
+        RtcmBitReader.h
+        RtcmNavDecoder.cc
+        RtcmNavDecoder.h
+        RtcmObsDecoder.cc
+        RtcmObsDecoder.h
         RtcmStreamParser.cc
         RtcmStreamParser.h
         UdpRtcmReceiver.cc

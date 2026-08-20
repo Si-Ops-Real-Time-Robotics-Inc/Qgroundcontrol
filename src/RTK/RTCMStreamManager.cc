@@ -18,6 +18,10 @@
 #include "QGCLoggingCategory.h"
 #include "RTCMFileLogger.h"
 #include "RTCMMavlink.h"
+#include "RinexNavWriter.h"
+#include "RinexObsWriter.h"
+#include "RtcmNavDecoder.h"
+#include "RtcmObsDecoder.h"
 #include "RtcmStreamParser.h"
 #include "RTKSettings.h"
 #include "SettingsManager.h"
@@ -28,6 +32,7 @@
 #include <QtCore/qapplicationstatic.h>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDateTime>
+#include <QtCore/QDir>
 #include <QtCore/QFileInfo>
 #include <QtCore/QPermissions>
 #include <QtCore/QThread>
@@ -40,6 +45,12 @@ QGC_LOGGING_CATEGORY(RTCMStreamManagerLog, "qgc.rtk.rtcmstreammanager")
 Q_APPLICATION_STATIC(RTCMStreamManager, _rtcmStreamManager);
 
 namespace {
+    enum RtcmLogFormat {
+        LogFormatRinex = 0,
+        LogFormatRaw   = 1,
+        LogFormatBoth  = 2
+    };
+
     enum RtcmSourceType {
         SourceNone      = 0,
         SourceSerial    = 1,
@@ -66,6 +77,7 @@ RTCMStreamManager::RTCMStreamManager(QObject *parent)
     RTKSettings *const rtkSettings = SettingsManager::instance()->rtkSettings();
     (void) connect(rtkSettings->rtcmSourceType(), &Fact::rawValueChanged, this, &RTCMStreamManager::_onSourceTypeSettingChanged);
     (void) connect(rtkSettings->logRtcmToFile(), &Fact::rawValueChanged, this, &RTCMStreamManager::_onLogSettingChanged);
+    (void) connect(rtkSettings->rtcmLogFormat(), &Fact::rawValueChanged, this, &RTCMStreamManager::_onLogFormatSettingChanged);
 }
 
 RTCMStreamManager::~RTCMStreamManager()
@@ -197,8 +209,7 @@ void RTCMStreamManager::startStream()
     (void) connect(_streamParser, &RtcmStreamParser::rtcmFrames, _rtcmMavlink, &RTCMMavlink::RTCMDataUpdate);
     (void) connect(_streamParser, &RtcmStreamParser::basePositionUpdate, this, &RTCMStreamManager::_onBasePositionUpdate);
 
-    // The file log keeps the raw stream - that is what makes it useful for diagnosing a source
-    // that is not sending RTCM in the first place.
+    // Logging hangs off the parser too, so the file only ever holds validated RTCM.
     if (rtkSettings->logRtcmToFile()->rawValue().toBool()) {
         _startFileLogging();
     }
@@ -552,22 +563,103 @@ void RTCMStreamManager::_onLogSettingChanged()
     }
 }
 
+QString RTCMStreamManager::_logBasePath(const QString &configuredPath)
+{
+    // Reuse the writer's own path resolution so there is one place that knows where logs live,
+    // then drop the extension - the callers append their own.
+    QString path = configuredPath.isEmpty() ? RinexObsWriter::defaultFilePath() : configuredPath;
+    const QFileInfo info(path);
+    return info.dir().filePath(info.completeBaseName());
+}
+
+void RTCMStreamManager::_onLogFormatSettingChanged()
+{
+    // The writers are chosen by format, so switching while a log is open means closing those files
+    // and opening the new set. Without this the combo box would appear to do nothing until the
+    // user toggled logging off and on again.
+    if (!active() || !_worker || !_fileLoggingActive()) {
+        return;
+    }
+
+    qCDebug(RTCMStreamManagerLog) << "Log format changed while streaming - reopening log files";
+    _stopFileLogging();
+    _startFileLogging();
+}
+
+bool RTCMStreamManager::_fileLoggingActive() const
+{
+    return (_fileLogger || _rinexWriter || _rinexNavWriter);
+}
+
 void RTCMStreamManager::_startFileLogging()
 {
-    if (_fileLogger || !_worker) {
+    if (_fileLogger || _rinexWriter || _rinexNavWriter || !_worker || !_streamParser) {
         return;
     }
 
     RTKSettings *const rtkSettings = SettingsManager::instance()->rtkSettings();
-    _fileLogger = new RTCMFileLogger(rtkSettings->rtcmLogPath()->rawValue().toString(), this);
-    (void) connect(_worker, &RTCMNetworkSource::rtcmData, _fileLogger, &RTCMFileLogger::logData, Qt::QueuedConnection);
-    (void) connect(_fileLogger, &RTCMFileLogger::bytesWrittenChanged, this, &RTCMStreamManager::_onLogBytesWritten, Qt::QueuedConnection);
+    const int format = rtkSettings->rtcmLogFormat()->rawValue().toInt();
+    const bool wantRinex = ((format == LogFormatRinex) || (format == LogFormatBoth));
+    const bool wantRaw = ((format == LogFormatRaw) || (format == LogFormatBoth));
+    if (!wantRinex && !wantRaw) {
+        return;
+    }
+
+    // One base name for the whole session so the files obviously belong together.
+    const QString basePath = _logBasePath(rtkSettings->rtcmLogPath()->rawValue().toString());
+    _rawLogBytes = 0;
+    _rinexObsBytes = 0;
+    _rinexNavBytes = 0;
+
+    QStringList writtenExtensions;
+
+    if (wantRinex) {
+        // Decode the validated frames into observation epochs and stream them out as RINEX 3.04.
+        _obsDecoder = new RtcmObsDecoder(this);
+        _rinexWriter = new RinexObsWriter(basePath + QStringLiteral(".obs"), this);
+        (void) connect(_streamParser, &RtcmStreamParser::rtcmFrames, _obsDecoder, &RtcmObsDecoder::addFrames);
+        (void) connect(_obsDecoder, &RtcmObsDecoder::epochReady, _rinexWriter, &RinexObsWriter::writeEpoch);
+        (void) connect(_obsDecoder, &RtcmObsDecoder::stationInfoChanged, this, &RTCMStreamManager::_onStationInfoChanged);
+        (void) connect(_rinexWriter, &RinexObsWriter::bytesWrittenChanged, this, &RTCMStreamManager::_onRinexObsBytesWritten);
+        writtenExtensions.append(QStringLiteral(".obs"));
+
+        // Broadcast ephemeris rides in the same stream (1019/1020/1042/1044/1045/1046). Post
+        // processing needs it alongside the observations, so it goes to a paired .nav file.
+        _navDecoder = new RtcmNavDecoder(this);
+        _rinexNavWriter = new RinexNavWriter(basePath + QStringLiteral(".nav"), this);
+        (void) connect(_streamParser, &RtcmStreamParser::rtcmFrames, _navDecoder, &RtcmNavDecoder::addFrames);
+        (void) connect(_navDecoder, &RtcmNavDecoder::ephemerisReady, _rinexNavWriter, &RinexNavWriter::writeEphemeris);
+        (void) connect(_rinexNavWriter, &RinexNavWriter::bytesWrittenChanged, this, &RTCMStreamManager::_onRinexNavBytesWritten);
+        writtenExtensions.append(QStringLiteral(".nav"));
+    }
+
+    if (wantRaw) {
+        // Log the validated frames, not the raw socket stream: the file stays a clean RTCM3
+        // recording that any RTCM tool can replay, with no caster error pages or NMEA in it.
+        _fileLogger = new RTCMFileLogger(basePath + QStringLiteral(".rtcm3"), this);
+        (void) connect(_streamParser, &RtcmStreamParser::rtcmFrames, _fileLogger, &RTCMFileLogger::logData);
+        (void) connect(_fileLogger, &RTCMFileLogger::bytesWrittenChanged, this, &RTCMStreamManager::_onLogBytesWritten, Qt::QueuedConnection);
+        writtenExtensions.append(QStringLiteral(".rtcm3"));
+    }
 
     if (_factGroup) {
-        _factGroup->logFileName()->setRawValue(QFileInfo(_fileLogger->filePath()).fileName());
+        _factGroup->logFileName()->setRawValue(QStringLiteral("%1 (%2)")
+                                                   .arg(QFileInfo(basePath).fileName(),
+                                                        writtenExtensions.join(QStringLiteral(", "))));
         _factGroup->logBytes()->setRawValue(0);
     }
-    qCDebug(RTCMStreamManagerLog) << "Started RTCM file logging ->" << _fileLogger->filePath();
+
+    qCDebug(RTCMStreamManagerLog) << "Started RTCM logging" << writtenExtensions << "->" << basePath;
+}
+
+void RTCMStreamManager::_onStationInfoChanged()
+{
+    // The header needs the station position and antenna/receiver descriptors, and those arrive in
+    // their own messages a second or two after the observations start.
+    if (_rinexWriter && _obsDecoder) {
+        _rinexWriter->setStationInfo(_obsDecoder->stationInfo());
+        _rinexWriter->setGlonassChannels(_obsDecoder->glonassChannels());
+    }
 }
 
 void RTCMStreamManager::_stopFileLogging()
@@ -577,6 +669,35 @@ void RTCMStreamManager::_stopFileLogging()
         _fileLogger = nullptr;
         qCDebug(RTCMStreamManagerLog) << "Stopped RTCM file logging";
     }
+    if (_rinexWriter) {
+        // Flush the epochs still buffered for the header before the file goes away.
+        if (_obsDecoder) {
+            _obsDecoder->flush();
+        }
+        _rinexWriter->finish();
+        qCDebug(RTCMStreamManagerLog) << "Stopped RINEX logging after" << _rinexWriter->epochsWritten() << "epochs";
+        _rinexWriter->deleteLater();
+        _rinexWriter = nullptr;
+    }
+    if (_obsDecoder) {
+        _obsDecoder->deleteLater();
+        _obsDecoder = nullptr;
+    }
+    if (_rinexNavWriter) {
+        _rinexNavWriter->finish();
+        qCDebug(RTCMStreamManagerLog) << "Stopped RINEX nav logging after"
+                                      << _rinexNavWriter->recordsWritten() << "ephemeris records";
+        _rinexNavWriter->deleteLater();
+        _rinexNavWriter = nullptr;
+    }
+    if (_navDecoder) {
+        _navDecoder->deleteLater();
+        _navDecoder = nullptr;
+    }
+    _rawLogBytes = 0;
+    _rinexObsBytes = 0;
+    _rinexNavBytes = 0;
+
     if (_factGroup) {
         _factGroup->logFileName()->setRawValue(QString());
         _factGroup->logBytes()->setRawValue(0);
@@ -585,8 +706,26 @@ void RTCMStreamManager::_stopFileLogging()
 
 void RTCMStreamManager::_onLogBytesWritten(quint64 totalBytes)
 {
+    _rawLogBytes = totalBytes;
+    _updateLogBytesFact();
+}
+
+void RTCMStreamManager::_onRinexObsBytesWritten(quint64 totalBytes)
+{
+    _rinexObsBytes = totalBytes;
+    _updateLogBytesFact();
+}
+
+void RTCMStreamManager::_onRinexNavBytesWritten(quint64 totalBytes)
+{
+    _rinexNavBytes = totalBytes;
+    _updateLogBytesFact();
+}
+
+void RTCMStreamManager::_updateLogBytesFact()
+{
     if (_factGroup) {
-        _factGroup->logBytes()->setRawValue(static_cast<double>(totalBytes));
+        _factGroup->logBytes()->setRawValue(static_cast<double>(_rawLogBytes + _rinexObsBytes + _rinexNavBytes));
     }
 }
 
